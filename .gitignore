@@ -26,3 +26,6 @@ build/
 **/crash.log
 **/crash.*.log
 ~
+
+# Kiro IDE workspace (specs + steering) — local only
+.kiro/
