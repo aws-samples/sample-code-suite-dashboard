@@ -35,3 +35,6 @@ build/
 
 # CloudFormation packaging output (regenerated each deploy)
 cloudformation/**/.packaged*.yaml
+
+# Local-only engineering doc
+CHEATSHEET.md
