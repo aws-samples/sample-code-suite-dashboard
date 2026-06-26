@@ -61,6 +61,32 @@ the API never accepts unsigned requests.
 - Python 3.10+ (for `scripts/awscall.py` and CodeCommit's git remote helper)
 - `git-remote-codecommit` for seeding sample pipelines:
   `pip install --user git-remote-codecommit`
+- An IAM identity (user, role, or SSO permission set) to run the dashboard as.
+  The Vite dev server picks it up from the standard AWS credential chain (env
+  vars, `~/.aws/credentials`, SSO) and uses it to SigV4-sign every API call.
+  It needs:
+  - `execute-api:Invoke` on
+    `arn:aws:execute-api:<region>:<account>:<api-id>/*/*` — granted by the
+    managed policy emitted as `api_invoke_policy_arn` (Terraform) /
+    `ApiInvokePolicyArn` (CloudFormation). The Quick-start steps attach this
+    for you.
+  - The usual AWS sign-in permissions for the credential source you're using
+    (`sts:AssumeRoleWithSSO` for SSO, `sts:AssumeRole` for assumed roles,
+    long-lived access keys for an IAM user). These are governed by your
+    SSO/role config, not by this project.
+
+  Minimum standalone policy (equivalent to attaching `api_invoke_policy_arn`):
+
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": "execute-api:Invoke",
+      "Resource": "arn:aws:execute-api:<region>:<account>:<api-id>/*/*"
+    }]
+  }
+  ```
 
 ## Quick start — Terraform path
 
@@ -144,7 +170,9 @@ account in the org and lets the stats Lambda enumerate them at runtime.
 - **API:** every route on the HTTP API has `AuthorizationType: AWS_IAM`.
   Unsigned requests get HTTP 403. To call the API a principal must have
   `execute-api:Invoke` on the route ARN — the deploy outputs a managed policy
-  (`api_invoke_policy_arn`) you can attach to whoever needs access.
+  (`api_invoke_policy_arn`) you can attach to whoever needs access. See
+  [Prerequisites](#prerequisites) for the exact permissions needed by the
+  IAM identity that runs the dashboard locally.
 - **S3 buckets:** all four public-access-block flags on. Bucket policies
   deny non-TLS access. No public website hosting.
 - **Cross-account:** the reader role's trust policy is locked to the central
