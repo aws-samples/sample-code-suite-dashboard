@@ -45,7 +45,7 @@ the API never accepts unsigned requests.
 ├── terraform/                  # canonical IaC
 │   ├── dashboard-backend/      # Lambdas, API GW, S3 + Glue + Athena, Firehose, EventBridge
 │   ├── cross-account-reader/   # IAM role deployed into each target account
-│   ├── sample-pipelines/       # 3 demo pipelines (Python / Node / static)
+│   ├── sample-pipelines/       # 3 demo pipelines (Python / Node / static) — OPTIONAL, for testing
 │   └── modules/                # shared TF modules
 ├── cloudformation/             # CFN mirror of the same 3 stacks (self-contained)
 ├── dashboard/                  # React + Vite + Tailwind UI (local-only)
@@ -94,7 +94,9 @@ the API never accepts unsigned requests.
 # 1. Deploy the central backend (Lambdas, API, data lake, etc.)
 make deploy-dashboard
 
-# 2. Deploy 3 demo pipelines so the dashboard has data
+# 2. (Optional) Deploy 3 demo pipelines so the dashboard has data to render.
+#    Skip this if you already have real CodePipeline/CodeBuild activity in the
+#    account, or if you just want to onboard tracked accounts and use those.
 make deploy-sample-pipelines
 
 # 3. Attach the API invoke policy to the IAM identity you'll run the UI as
@@ -116,7 +118,9 @@ aws s3 mb "s3://$CFN_PKG_BUCKET"
 # 1. Deploy the central backend
 make deploy-cfn-dashboard
 
-# 2. Deploy + seed the demo pipelines
+# 2. (Optional) Deploy + seed the demo pipelines so the dashboard has data.
+#    Skip this if you already have real CodePipeline/CodeBuild activity, or
+#    plan to onboard tracked accounts and use their pipelines instead.
 make deploy-cfn-sample-pipelines
 make seed-cfn-samples
 
