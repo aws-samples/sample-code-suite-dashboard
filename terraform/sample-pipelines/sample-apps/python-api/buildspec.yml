@@ -1,0 +1,22 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - python -m pip install --upgrade pip
+      - pip install -r requirements.txt
+  build:
+    commands:
+      - echo "Running unit tests..."
+      - pytest -q
+  post_build:
+    commands:
+      - echo "Python build complete on $(date -u +%FT%TZ)"
+
+artifacts:
+  files:
+    - app.py
+    - requirements.txt
+  discard-paths: no

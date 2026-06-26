@@ -1,0 +1,28 @@
+# OS
+.DS_Store
+*.log
+
+# Node / Vite
+node_modules/
+dist/
+build/
+
+# Environment files (may contain API URLs / secrets)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Terraform — never commit state or the local plugin cache.
+# NOTE: `.terraform.lock.hcl` SHOULD be committed (HashiCorp guidance) so every
+# operator + CI resolves identical provider versions. Don't add it back here.
+**/.terraform/
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/terraform.tfstate.*.backup
+**/*.tfvars
+**/*.tfvars.json
+**/crash.log
+**/crash.*.log
+~
