@@ -168,8 +168,7 @@ make list-tracked-accounts      # GET /accounts via SigV4 + jq
 
 ## Conventions
 
-The project conventions doc (`.kiro/steering/project-conventions.md`, local-
-only) is the binding style guide. Highlights:
+Highlights of the project style guide:
 
 - Always go through the Makefile — don't invent new `terraform apply` or
   `cloudformation deploy` invocations.
