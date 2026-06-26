@@ -38,3 +38,6 @@ cloudformation/**/.packaged*.yaml
 
 # Local-only engineering doc
 CHEATSHEET.md
+
+# Blog post draft (local-only)
+*.docx
