@@ -62,6 +62,17 @@ help:
 	@echo "  make deploy-sample-pipelines   Create 3 demo CodePipelines + seed source"
 	@echo "  make destroy-sample-pipelines  Tear them down"
 	@echo ""
+	@echo "CloudFormation deploy path (alternative to Terraform — see cloudformation/README.md):"
+	@echo "  export CFN_PKG_BUCKET=<your-bucket>   # required for Lambda packaging"
+	@echo "  make plan-cfn-dashboard               Package + show change set, no apply"
+	@echo "  make deploy-cfn-dashboard             Deploy the central backend stack"
+	@echo "  make deploy-cfn-sample-pipelines     Deploy 3 demo pipelines (empty repos)"
+	@echo "  make seed-cfn-samples [NAME_PREFIX=sample]   Push sample-apps/* into each repo"
+	@echo "  make deploy-cfn-reader CENTRAL_LAMBDA_ROLE_ARN=arn:... PROFILE=<target>"
+	@echo "                                        Deploy reader role in a target account"
+	@echo "  make sync-cfn-from-tf                 Re-copy lambda/ + sample-apps/ from terraform/"
+	@echo "  make destroy-cfn-dashboard / destroy-cfn-sample-pipelines"
+	@echo ""
 	@echo "Multi-account dashboard:"
 	@echo "  make track-account PROFILE=<other-aws-profile> ALIAS=<short-label> [REGION=us-east-1]"
 	@echo "                           Deploy reader role in a target account and add it"
@@ -320,3 +331,130 @@ disable-org-tracking:
 	@echo ">> Disabling Organizations auto-discovery (StackSet instances are removed; the IAM role lingers in target accounts but is harmless)."
 	terraform -chdir=terraform/dashboard-backend apply -auto-approve \
 	  -var 'tracked_organization={enabled=false}'
+
+
+# -----------------------------------------------------------------------------
+# CloudFormation deploy path — parallel to the Terraform targets above.
+# Requires a packaging S3 bucket; set CFN_PKG_BUCKET in your env. Create one
+# once per region:
+#   aws s3 mb s3://cfn-pkg-$$(aws sts get-caller-identity --query Account --output text)-us-east-1
+# -----------------------------------------------------------------------------
+CFN_DIR        ?= cloudformation
+CFN_STACK_NAME ?= pipeline-dashboard
+CFN_REGION     ?= us-east-1
+
+# Guard so we don't `aws cloudformation package` without a bucket and end up
+# with a half-rendered template referencing local paths.
+_require-pkg-bucket:
+	@if [ -z "$(CFN_PKG_BUCKET)" ]; then \
+	  echo "ERROR: CFN_PKG_BUCKET is not set."; \
+	  echo "  Create one and export it, e.g.:"; \
+	  echo "    aws s3 mb s3://cfn-pkg-$$(aws sts get-caller-identity --query Account --output text)-us-east-1"; \
+	  echo "    export CFN_PKG_BUCKET=cfn-pkg-$$(aws sts get-caller-identity --query Account --output text)-us-east-1"; \
+	  exit 1; \
+	fi
+
+# Validate (no deploy) — equivalent of `make plan-dashboard`.
+plan-cfn-dashboard: _require-pkg-bucket
+	@echo ">> Packaging $(CFN_DIR)/dashboard-backend/template.yaml"
+	aws cloudformation package \
+	  --template-file $(CFN_DIR)/dashboard-backend/template.yaml \
+	  --s3-bucket $(CFN_PKG_BUCKET) \
+	  --output-template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
+	  --region $(CFN_REGION)
+	@echo ">> Validating packaged template"
+	aws cloudformation validate-template \
+	  --template-body file://$(CFN_DIR)/dashboard-backend/.packaged.yaml \
+	  --region $(CFN_REGION) >/dev/null
+	@echo ">> Showing change set against stack $(CFN_STACK_NAME) (will not execute)"
+	-aws cloudformation deploy \
+	  --stack-name $(CFN_STACK_NAME) \
+	  --template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
+	  --capabilities CAPABILITY_NAMED_IAM \
+	  --no-execute-changeset \
+	  --region $(CFN_REGION)
+
+deploy-cfn-dashboard: _require-pkg-bucket
+	@echo ">> Packaging $(CFN_DIR)/dashboard-backend/template.yaml"
+	aws cloudformation package \
+	  --template-file $(CFN_DIR)/dashboard-backend/template.yaml \
+	  --s3-bucket $(CFN_PKG_BUCKET) \
+	  --output-template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
+	  --region $(CFN_REGION)
+	@echo ">> Deploying stack $(CFN_STACK_NAME)"
+	aws cloudformation deploy \
+	  --stack-name $(CFN_STACK_NAME) \
+	  --template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
+	  --capabilities CAPABILITY_NAMED_IAM \
+	  --region $(CFN_REGION)
+	@aws cloudformation describe-stacks --stack-name $(CFN_STACK_NAME) --region $(CFN_REGION) \
+	  --query 'Stacks[0].Outputs[].{Key:OutputKey,Value:OutputValue}' --output table
+
+deploy-cfn-sample-pipelines:
+	@echo ">> Deploying sample pipelines (CFN)"
+	aws cloudformation deploy \
+	  --stack-name $(CFN_STACK_NAME)-samples \
+	  --template-file $(CFN_DIR)/sample-pipelines/template.yaml \
+	  --capabilities CAPABILITY_NAMED_IAM \
+	  --region $(CFN_REGION)
+	@echo ""
+	@echo ">> Pipelines deployed but their CodeCommit repos are empty."
+	@echo "   Run 'make seed-cfn-samples' to populate them with starter source."
+
+# Mirrors what terraform/sample-pipelines/seed.tf does on `apply`:
+# init a temp git repo, commit each cloudformation/sample-pipelines/sample-apps/<dir>,
+# and force-push to main on the matching CodeCommit repo.
+#
+# Override NAME_PREFIX if you deployed the samples stack with a non-default
+# NamePrefix (e.g. for a parallel deploy alongside Terraform). Defaults to
+# "sample" — matching the CFN template default.
+seed-cfn-samples: NAME_PREFIX ?= sample
+seed-cfn-samples:
+	@for s in python-api node-api static-site ; do \
+	  REPO_NAME="$(NAME_PREFIX)-$$s" ; \
+	  SRC="$(CFN_DIR)/sample-pipelines/sample-apps/$$s" ; \
+	  if [ ! -d "$$SRC" ]; then echo "skip $$s: $$SRC not found"; continue; fi ; \
+	  echo ">> Seeding $$REPO_NAME from $$SRC"; \
+	  WORKDIR=$$(mktemp -d) ; \
+	  cp -R "$$SRC/." "$$WORKDIR/" ; \
+	  ( cd "$$WORKDIR" && \
+	    git init -q -b main && \
+	    git -c user.email=cfn@sample-pipelines.local -c user.name=cfn add . && \
+	    git -c user.email=cfn@sample-pipelines.local -c user.name=cfn commit -q -m "Seed $$s sample app" && \
+	    git push -q --force "codecommit::$(CFN_REGION)://$$REPO_NAME" main ) ; \
+	  rm -rf "$$WORKDIR" ; \
+	done
+
+# Re-sync Lambda code + sample apps from terraform/ -> cloudformation/.
+# Terraform is the canonical source per cloudformation/README.md; run this
+# after editing Lambda code or sample-apps under terraform/ to mirror the
+# changes into the CFN folder. Idempotent and safe to re-run.
+sync-cfn-from-tf:
+	@echo ">> Syncing Lambda code  terraform/ -> cloudformation/"
+	rsync -a --delete terraform/dashboard-backend/lambda/ cloudformation/dashboard-backend/lambda/
+	@echo ">> Syncing sample apps  terraform/ -> cloudformation/"
+	rsync -a --delete terraform/sample-pipelines/sample-apps/ cloudformation/sample-pipelines/sample-apps/
+	@echo ">> Done. Run 'make deploy-cfn-dashboard' / 'make deploy-cfn-sample-pipelines' to publish."
+
+deploy-cfn-reader:
+	@if [ -z "$(CENTRAL_LAMBDA_ROLE_ARN)" ]; then \
+	  echo "Usage: make deploy-cfn-reader CENTRAL_LAMBDA_ROLE_ARN=arn:aws:iam::<central>:role/pipeline-dashboard-stats-lambda-role [PROFILE=<target-profile>]"; \
+	  exit 1; \
+	fi
+	@echo ">> Deploying cross-account reader role in $(if $(PROFILE),profile=$(PROFILE),default profile)"
+	aws cloudformation deploy \
+	  --stack-name pipeline-dashboard-reader \
+	  --template-file $(CFN_DIR)/cross-account-reader/template.yaml \
+	  --capabilities CAPABILITY_NAMED_IAM \
+	  --parameter-overrides "CentralLambdaRoleArn=$(CENTRAL_LAMBDA_ROLE_ARN)" \
+	  --region $(CFN_REGION) \
+	  $(if $(PROFILE),--profile $(PROFILE),)
+
+# Symmetric destroy targets so users aren't left guessing.
+destroy-cfn-dashboard:
+	aws cloudformation delete-stack --stack-name $(CFN_STACK_NAME) --region $(CFN_REGION)
+	aws cloudformation wait stack-delete-complete --stack-name $(CFN_STACK_NAME) --region $(CFN_REGION)
+
+destroy-cfn-sample-pipelines:
+	aws cloudformation delete-stack --stack-name $(CFN_STACK_NAME)-samples --region $(CFN_REGION)
+	aws cloudformation wait stack-delete-complete --stack-name $(CFN_STACK_NAME)-samples --region $(CFN_REGION)
