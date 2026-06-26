@@ -1,0 +1,881 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  AWS Code Suite observability dashboard — central backend stack.
+  Mirrors terraform/dashboard-backend/. Deploys S3 data lake, Firehose
+  delivery streams, EventBridge rules, Glue catalog, Athena workgroup,
+  enrichment + stats Lambdas, the HTTP API (AWS_IAM auth), and
+  CloudWatch alarms. Optional Organizations StackSet pushes the
+  cross-account reader role to every account in the org.
+
+  Deploy with `aws cloudformation package` then `aws cloudformation deploy`
+  so the Lambda CodeUri references get uploaded to S3.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: pipeline-dashboard
+    Description: Prefix applied to every resource name.
+    AllowedPattern: ^[a-z0-9-]+$
+
+  HostingBucket:
+    Type: String
+    Default: react-cicd-hosting-795065187596
+    Description: >
+      Name of the React app's hosting bucket (for reading version.json).
+      Only used by the Lambda runtime — not created here.
+
+  CorsAllowOrigin:
+    Type: String
+    Default: http://localhost:5173
+    Description: Single CORS allow-origin advertised by API Gateway and Lambda.
+
+  TrackedAccounts:
+    Type: String
+    Default: "[]"
+    Description: >
+      JSON-encoded list of tracked_accounts entries, e.g.:
+      '[{"account_id":"111111111111","alias":"prod","region":"us-east-1","role_arn":"arn:aws:iam::111111111111:role/PipelineDashboardReader"}]'
+      Passed straight through to the stats Lambda as TRACKED_ACCOUNTS env var.
+
+  SyntheticAccountCount:
+    Type: Number
+    Default: 0
+    MinValue: 0
+    MaxValue: 500
+    Description: How many synthetic (fake) accounts the stats Lambda generates for UI volume. Set 0 in production.
+
+  OrgEnabled:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Enable AWS Organizations auto-discovery + StackSet push of the reader role.
+
+  OrgRootId:
+    Type: String
+    Default: ""
+    Description: Required when OrgEnabled=true. Organization root ID like "r-xxxx".
+
+  OrgRoleName:
+    Type: String
+    Default: PipelineDashboardReader
+    Description: Name of the reader role in each org account (matches RoleName in cross-account-reader template).
+
+  OrgRegions:
+    Type: CommaDelimitedList
+    Default: us-east-1
+    Description: Regions the stats Lambda will hit in each org account.
+
+  OrgExcludeAccountIds:
+    Type: CommaDelimitedList
+    Default: ""
+    Description: Optional list of org account IDs to skip.
+
+  GlueDatabaseName:
+    Type: String
+    Default: pipeline_dashboard_db
+    Description: >
+      Glue database name. Use underscores (Glue convention). Change when
+      doing parallel deploys alongside an existing stack to avoid collision.
+    AllowedPattern: ^[a-z0-9_]+$
+
+  AccessLogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: Retention (days) for the API Gateway access log group.
+
+  LambdaLogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: Retention (days) for Lambda CloudWatch log groups.
+
+Conditions:
+  OrgEnabledCondition: !Equals [!Ref OrgEnabled, "true"]
+
+Resources:
+  # ============================================================
+  # S3 data lake
+  # ============================================================
+  DataLakeBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-data-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      Tags:
+        - Key: Project
+          Value: aws-code-suite-observability
+
+  DataLakeBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref DataLakeBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt DataLakeBucket.Arn
+              - !Sub "${DataLakeBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # ============================================================
+  # IAM: Firehose role + EventBridge-to-Firehose role
+  # ============================================================
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-firehose-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FirehoseS3Write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetBucketLocation
+                  - s3:AbortMultipartUpload
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                Resource:
+                  - !GetAtt DataLakeBucket.Arn
+                  - !Sub "${DataLakeBucket.Arn}/*"
+
+  EventsToFirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-eventbridge-firehose-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+
+  # ============================================================
+  # Firehose delivery streams
+  # ============================================================
+  PipelineEventsStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: !Sub "${ProjectName}-pipeline-events"
+      DeliveryStreamType: DirectPut
+      ExtendedS3DestinationConfiguration:
+        RoleARN: !GetAtt FirehoseRole.Arn
+        BucketARN: !GetAtt DataLakeBucket.Arn
+        Prefix: "pipeline-events/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"
+        ErrorOutputPrefix: "errors/pipeline-events/"
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+
+  BuildEventsStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: !Sub "${ProjectName}-build-events"
+      DeliveryStreamType: DirectPut
+      ExtendedS3DestinationConfiguration:
+        RoleARN: !GetAtt FirehoseRole.Arn
+        BucketARN: !GetAtt DataLakeBucket.Arn
+        Prefix: "build-events/year=!{timestamp:yyyy}/month=!{timestamp:MM}/day=!{timestamp:dd}/"
+        ErrorOutputPrefix: "errors/build-events/"
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+
+  EventsToFirehosePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ProjectName}-eventbridge-firehose-policy"
+      Roles:
+        - !Ref EventsToFirehoseRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - firehose:PutRecord
+              - firehose:PutRecordBatch
+            Resource:
+              - !GetAtt PipelineEventsStream.Arn
+              - !GetAtt BuildEventsStream.Arn
+
+  # ============================================================
+  # EventBridge rules: pipeline + build state changes -> Firehose
+  # ============================================================
+  PipelineEventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline-events-rule"
+      Description: Captures all CodePipeline execution state changes
+      EventPattern:
+        source:
+          - aws.codepipeline
+        detail-type:
+          - CodePipeline Pipeline Execution State Change
+      Targets:
+        - Id: PipelineFirehoseTarget
+          Arn: !GetAtt PipelineEventsStream.Arn
+          RoleArn: !GetAtt EventsToFirehoseRole.Arn
+
+  BuildEventsRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-build-events-rule"
+      Description: Captures all CodeBuild build state changes
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+      Targets:
+        - Id: BuildFirehoseTarget
+          Arn: !GetAtt BuildEventsStream.Arn
+          RoleArn: !GetAtt EventsToFirehoseRole.Arn
+
+  # ============================================================
+  # Glue catalog
+  # ============================================================
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Ref GlueDatabaseName
+        Description: CI/CD pipeline observability data
+
+  PipelineExecutionsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: pipeline_executions
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+        StorageDescriptor:
+          Location: !Sub "s3://${DataLakeBucket}/pipeline-events/"
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters:
+              paths: version,id,detail-type,source,account,time,region,detail
+          Columns:
+            - { Name: version, Type: string }
+            - { Name: id, Type: string }
+            - { Name: detail-type, Type: string }
+            - { Name: source, Type: string }
+            - { Name: account, Type: string }
+            - { Name: time, Type: string }
+            - { Name: region, Type: string }
+            - Name: detail
+              Type: struct<pipeline:string,execution-id:string,state:string,version:int>
+
+  BuildEventsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: build_events
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+        StorageDescriptor:
+          Location: !Sub "s3://${DataLakeBucket}/build-events/"
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+            Parameters:
+              paths: version,id,detail-type,source,account,time,region,detail
+          Columns:
+            - { Name: version, Type: string }
+            - { Name: id, Type: string }
+            - { Name: detail-type, Type: string }
+            - { Name: source, Type: string }
+            - { Name: account, Type: string }
+            - { Name: time, Type: string }
+            - { Name: region, Type: string }
+            - Name: detail
+              Type: struct<build-status:string,project-name:string,build-id:string,current-phase:string,additional-information:struct<build-start-time:string,build-complete-time:string,initiator:string,source-version:string>>
+
+  EnrichedPipelineExecutionsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: enriched_pipeline_executions
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+        StorageDescriptor:
+          Location: !Sub "s3://${DataLakeBucket}/enriched/pipeline-executions/"
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+          Columns:
+            - { Name: pipeline_name, Type: string }
+            - { Name: execution_id, Type: string }
+            - { Name: execution_status, Type: string }
+            - { Name: trigger_type, Type: string }
+            - { Name: source_revision, Type: string }
+            - { Name: deployed_version, Type: string }
+            - { Name: execution_start_time, Type: string }
+            - { Name: execution_end_time, Type: string }
+            - { Name: total_duration_seconds, Type: int }
+            - { Name: is_deployment, Type: boolean }
+            - Name: stages
+              Type: array<struct<stage_name:string,status:string,start_time:string,end_time:string,failure_reason:string>>
+            - { Name: enriched_at, Type: string }
+
+  EnrichedBuildDetailsTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref GlueDatabase
+      TableInput:
+        Name: enriched_build_details
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: json
+        StorageDescriptor:
+          Location: !Sub "s3://${DataLakeBucket}/enriched/build-details/"
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+          Columns:
+            - { Name: project_name, Type: string }
+            - { Name: build_id, Type: string }
+            - { Name: build_status, Type: string }
+            - { Name: build_duration_seconds, Type: int }
+            - { Name: initiator, Type: string }
+            - { Name: source_version, Type: string }
+            - Name: phases
+              Type: array<struct<phase_name:string,duration_seconds:int,status:string,context_message:string>>
+            - { Name: enriched_at, Type: string }
+
+  # ============================================================
+  # Athena workgroup
+  # ============================================================
+  AthenaWorkgroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub "${ProjectName}-workgroup"
+      Description: Workgroup for pipeline dashboard queries
+      State: ENABLED
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        ResultConfiguration:
+          OutputLocation: !Sub "s3://${DataLakeBucket}/athena-results/"
+
+
+  # ============================================================
+  # Enrichment Lambda
+  # ============================================================
+  EnrichmentDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${ProjectName}-enrichment-dlq"
+      MessageRetentionPeriod: 1209600  # 14 days
+      SqsManagedSseEnabled: true
+
+  EnrichmentLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-enrichment"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  EnrichmentLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-enrichment-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EnrichmentLambdaPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: CodePipelineListAccountLevel
+                Effect: Allow
+                Action:
+                  - codepipeline:ListPipelines
+                Resource: "*"
+              - Sid: CodePipelineRead
+                Effect: Allow
+                Action:
+                  - codepipeline:GetPipelineExecution
+                  - codepipeline:ListActionExecutions
+                Resource: !Sub "arn:aws:codepipeline:*:${AWS::AccountId}:*"
+              - Sid: CodeBuildRead
+                Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                Resource: !Sub "arn:aws:codebuild:*:${AWS::AccountId}:project/*"
+              - Sid: S3WriteEnriched
+                Effect: Allow
+                Action: s3:PutObject
+                Resource: !Sub "${DataLakeBucket.Arn}/enriched/*"
+              - Sid: S3ReadHostingBucket
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub "arn:aws:s3:::${HostingBucket}/version.json"
+              - Sid: DeadLetterQueue
+                Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt EnrichmentDLQ.Arn
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-enrichment:*"
+
+  EnrichmentLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: EnrichmentLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "${ProjectName}-enrichment"
+      Role: !GetAtt EnrichmentLambdaRole.Arn
+      Handler: index.handler
+      Runtime: python3.12
+      Timeout: 30
+      MemorySize: 256
+      # `aws cloudformation package` replaces this with the uploaded S3 URL.
+      Code: ./lambda/enrichment
+      DeadLetterConfig:
+        TargetArn: !GetAtt EnrichmentDLQ.Arn
+      Environment:
+        Variables:
+          BUCKET_NAME: !Ref DataLakeBucket
+          HOSTING_BUCKET: !Ref HostingBucket
+
+  PipelineEnrichmentRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-pipeline-enrichment-rule"
+      Description: Triggers enrichment Lambda on pipeline state changes
+      EventPattern:
+        source:
+          - aws.codepipeline
+        detail-type:
+          - CodePipeline Pipeline Execution State Change
+      Targets:
+        - Id: EnrichmentLambdaTarget
+          Arn: !GetAtt EnrichmentLambda.Arn
+
+  BuildEnrichmentRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub "${ProjectName}-build-enrichment-rule"
+      Description: Triggers enrichment Lambda on build state changes
+      EventPattern:
+        source:
+          - aws.codebuild
+        detail-type:
+          - CodeBuild Build State Change
+      Targets:
+        - Id: EnrichmentLambdaTarget
+          Arn: !GetAtt EnrichmentLambda.Arn
+
+  PipelineEnrichmentPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EnrichmentLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt PipelineEnrichmentRule.Arn
+
+  BuildEnrichmentPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EnrichmentLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt BuildEnrichmentRule.Arn
+
+  # ============================================================
+  # Stats Lambda + HTTP API
+  # ============================================================
+  StatsLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-stats"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  StatsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-stats-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+
+  # Inline policy attached after the role exists, so we can reference
+  # workgroup/db/etc. without circular refs.
+  StatsLambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${ProjectName}-stats-lambda-policy"
+      Roles:
+        - !Ref StatsLambdaRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - athena:StartQueryExecution
+              - athena:GetQueryExecution
+              - athena:GetQueryResults
+            Resource: !Sub "arn:aws:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AthenaWorkgroup}"
+          - Effect: Allow
+            Action:
+              - glue:GetDatabase
+              - glue:GetTable
+              - glue:GetPartitions
+            Resource:
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:catalog"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:database/${GlueDatabase}"
+              - !Sub "arn:aws:glue:${AWS::Region}:${AWS::AccountId}:table/${GlueDatabase}/*"
+          - Effect: Allow
+            Action:
+              - s3:GetBucketLocation
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:PutObject
+            Resource:
+              - !GetAtt DataLakeBucket.Arn
+              - !Sub "${DataLakeBucket.Arn}/*"
+          - Sid: CodePipelineListAccountLevel
+            Effect: Allow
+            Action:
+              - codepipeline:ListPipelines
+            Resource: "*"
+          - Sid: CodePipelineRead
+            Effect: Allow
+            Action:
+              - codepipeline:GetPipeline
+              - codepipeline:GetPipelineState
+              - codepipeline:ListPipelineExecutions
+            Resource: !Sub "arn:aws:codepipeline:*:${AWS::AccountId}:*"
+          - Sid: S3ReadHostingBucket
+            Effect: Allow
+            Action: s3:GetObject
+            Resource: !Sub "arn:aws:s3:::${HostingBucket}/version.json"
+          - Sid: CloudWatchLogs
+            Effect: Allow
+            Action:
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-stats:*"
+
+  # Organizations integration: extra inline policy applied only when enabled.
+  # Splits out so the base policy doesn't carry org-wide AssumeRole grants
+  # when nothing is using them.
+  StatsLambdaOrgPolicy:
+    Type: AWS::IAM::Policy
+    Condition: OrgEnabledCondition
+    Properties:
+      PolicyName: !Sub "${ProjectName}-stats-lambda-org-policy"
+      Roles:
+        - !Ref StatsLambdaRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: OrganizationsListAccounts
+            Effect: Allow
+            Action:
+              - organizations:ListAccounts
+              - organizations:DescribeOrganization
+              - organizations:ListAccountsForParent
+            Resource: "*"
+          - Sid: AssumeOrgReaderEverywhere
+            Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !Sub "arn:aws:iam::*:role/${OrgRoleName}"
+            # Condition omitted because OrgId is only knowable at runtime.
+            # The Terraform stack adds aws:ResourceOrgID via a data source;
+            # CFN can't query Organizations at template-eval time, so we
+            # accept a slightly broader scope here. To tighten, add the
+            # condition manually after deploy via an IAM role-policy update.
+
+  StatsLambda:
+    Type: AWS::Lambda::Function
+    DependsOn: StatsLambdaLogGroup
+    Properties:
+      FunctionName: !Sub "${ProjectName}-stats"
+      Role: !GetAtt StatsLambdaRole.Arn
+      Handler: index.handler
+      Runtime: python3.12
+      Timeout: 60
+      MemorySize: 512
+      Code: ./lambda/stats
+      Environment:
+        Variables:
+          DATABASE: !Ref GlueDatabase
+          WORKGROUP: !Ref AthenaWorkgroup
+          ACCOUNT_ID: !Ref AWS::AccountId
+          REGION: !Ref AWS::Region
+          HOSTING_BUCKET: !Ref HostingBucket
+          TRACKED_ACCOUNTS: !Ref TrackedAccounts
+          SYNTHETIC_ACCOUNT_COUNT: !Ref SyntheticAccountCount
+          SYNTHETIC_ALIASES: "prod,stage,dev,qa,preview,sandbox,data,platform,ml,ops,audit,shared-services,tools,security,logging"
+          SYNTHETIC_REGIONS: "us-east-1,us-west-2,eu-west-1,eu-central-1,ap-southeast-2,ap-northeast-1"
+          ORG_ENABLED: !Ref OrgEnabled
+          ORG_ROLE_NAME: !Ref OrgRoleName
+          ORG_REGIONS: !Join [",", !Ref OrgRegions]
+          ORG_EXCLUDE_ACCOUNTS: !Join [",", !Ref OrgExcludeAccountIds]
+          CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
+
+  # ============================================================
+  # HTTP API (AWS_IAM auth — same default as the Terraform module)
+  # ============================================================
+  StatsApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${ProjectName}-stats-api"
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref CorsAllowOrigin
+        AllowMethods:
+          - GET
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+          - X-Amz-Date
+          - X-Amz-Security-Token
+          - X-Amz-Content-Sha256
+
+  StatsApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref StatsApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt StatsLambda.Arn
+      PayloadFormatVersion: "2.0"
+
+  StatsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /stats"
+      AuthorizationType: AWS_IAM
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  PipelinesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /pipelines"
+      AuthorizationType: AWS_IAM
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  AccountsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /accounts"
+      AuthorizationType: AWS_IAM
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${ProjectName}-stats-api"
+      RetentionInDays: !Ref AccessLogRetentionDays
+
+  StatsApiStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref StatsApi
+      StageName: "$default"
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","sourceIp":"$context.identity.sourceIp","userAgent":"$context.identity.userAgent","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","integrationErr":"$context.integrationErrorMessage"}'
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  StatsApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref StatsLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${StatsApi}/*/*"
+
+  # Managed policy for invoking the API. Attach to any IAM principal that
+  # needs to call the dashboard API (SSO permission set, IAM user, etc.).
+  ApiInvokePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${ProjectName}-stats-api-invoke"
+      Description: !Sub "Grants execute-api:Invoke on every route of the ${ProjectName}-stats-api HTTP API."
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: execute-api:Invoke
+            Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${StatsApi}/*/*"
+
+  # ============================================================
+  # CloudWatch alarms
+  # ============================================================
+  StatsLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-stats-lambda-errors"
+      AlarmDescription: Stats Lambda is erroring; the dashboard is likely broken.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref StatsLambda
+
+  EnrichmentLambdaErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-enrichment-lambda-errors"
+      AlarmDescription: Enrichment Lambda is failing; check the DLQ for dropped events.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref EnrichmentLambda
+
+  EnrichmentDLQDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-enrichment-dlq-not-empty"
+      AlarmDescription: Enrichment DLQ has dropped events. Inspect and replay or purge.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt EnrichmentDLQ.QueueName
+
+  # ============================================================
+  # Optional: Organizations StackSet — pushes the reader role into every
+  # account in the org so the stats Lambda can assume it.
+  # ============================================================
+  ReaderRoleStackSet:
+    Type: AWS::CloudFormation::StackSet
+    Condition: OrgEnabledCondition
+    Properties:
+      StackSetName: !Sub "${ProjectName}-reader-role"
+      Description: Read-only IAM role assumed by the pipeline-dashboard stats Lambda.
+      PermissionModel: SERVICE_MANAGED
+      Capabilities:
+        - CAPABILITY_NAMED_IAM
+      AutoDeployment:
+        Enabled: true
+        RetainStacksOnAccountRemoval: false
+      Parameters:
+        - ParameterKey: CentralLambdaRoleArn
+          ParameterValue: !GetAtt StatsLambdaRole.Arn
+        - ParameterKey: RoleName
+          ParameterValue: !Ref OrgRoleName
+      TemplateURL: ./reader-role-stackset.yaml
+      StackInstancesGroup:
+        - DeploymentTargets:
+            OrganizationalUnitIds:
+              - !Ref OrgRootId
+          Regions:
+            - !Ref AWS::Region
+
+Outputs:
+  DataLakeBucketName:
+    Value: !Ref DataLakeBucket
+
+  AthenaWorkgroupName:
+    Value: !Ref AthenaWorkgroup
+
+  GlueDatabaseName:
+    Value: !Ref GlueDatabase
+
+  PipelineEventsStreamName:
+    Value: !Ref PipelineEventsStream
+
+  BuildEventsStreamName:
+    Value: !Ref BuildEventsStream
+
+  StatsApiUrl:
+    Description: Base URL of the IAM-authorized stats HTTP API.
+    Value: !Sub "https://${StatsApi}.execute-api.${AWS::Region}.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}-StatsApiUrl"
+
+  StatsLambdaRoleArn:
+    Description: >
+      Paste this ARN into CentralLambdaRoleArn when deploying the
+      cross-account-reader stack into target accounts.
+    Value: !GetAtt StatsLambdaRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-StatsLambdaRoleArn"
+
+  ApiInvokePolicyArn:
+    Description: Managed policy granting execute-api:Invoke on the stats API. Attach to any caller.
+    Value: !Ref ApiInvokePolicy
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiInvokePolicyArn"
+
+  EnrichmentDLQUrl:
+    Description: Dead-letter queue URL for failed enrichment events.
+    Value: !Ref EnrichmentDLQ

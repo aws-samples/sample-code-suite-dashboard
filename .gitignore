@@ -29,3 +29,9 @@ build/
 
 # Kiro IDE workspace (specs + steering) — local only
 .kiro/
+
+# Editor settings — local only
+.vscode/
+
+# CloudFormation packaging output (regenerated each deploy)
+cloudformation/**/.packaged*.yaml
