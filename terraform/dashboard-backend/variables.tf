@@ -15,9 +15,15 @@ variable "project_name" {
 }
 
 variable "hosting_bucket" {
-  description = "Name of the React app's hosting bucket (used to read version.json)."
+  description = <<-EOT
+    Optional S3 bucket name that hosts a `version.json` marker file for the
+    deployed dashboard build. The stats + enrichment Lambdas read this to
+    surface the deployed version alongside pipeline data. Leave blank (the
+    default) if you run the dashboard locally — the code falls back to a
+    placeholder.
+  EOT
   type        = string
-  default     = "react-cicd-hosting-111122223333"
+  default     = ""
 }
 
 variable "tracked_accounts" {
@@ -72,10 +78,12 @@ variable "tracked_organization" {
     role_name            = optional(string, "PipelineDashboardReader")
     exclude_account_ids  = optional(list(string), [])
   })
+  # Off by default so a fresh clone works without an AWS Organization. To
+  # enable org auto-discovery, set enabled=true and organization_root_id to
+  # your org root (looks like "r-xxxx") in a *.tfvars file.
   default = {
-    enabled              = true
-    organization_root_id = "r-t2me"
-    regions              = ["us-east-1"]
+    enabled = false
+    regions = ["us-east-1"]
   }
 }
 

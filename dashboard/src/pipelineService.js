@@ -87,6 +87,47 @@ export async function getStats() {
   }
 }
 
+/**
+ * Kick off a DevOps Agent chat request. Returns `{ chatId }` on success —
+ * the backend is async, so the caller must poll `getChatStatus(chatId)`
+ * until status is 'succeeded' or 'failed'.
+ */
+export async function startChat({ question, pipelineContext }) {
+  try {
+    const res = await fetch(`${API_BASE}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ question, pipelineContext }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: body?.error || `chat_failed_${res.status}` };
+    return body; // { chatId, status: 'processing' }
+  } catch (err) {
+    console.error('[pipelineService] startChat failed:', err);
+    return { error: err.message || String(err) };
+  }
+}
+
+/**
+ * Fetch the current state of a chat request. Returns `{ chatId, status,
+ * answer?, error?, agentSpaceId? }`. Poll every ~2s until status !==
+ * 'processing'.
+ */
+export async function getChatStatus(chatId) {
+  try {
+    const res = await fetch(`${API_BASE}/chat/${encodeURIComponent(chatId)}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: body?.error || `chat_status_failed_${res.status}` };
+    return body;
+  } catch (err) {
+    console.error('[pipelineService] getChatStatus failed:', err);
+    return { error: err.message || String(err) };
+  }
+}
+
 // Real data refreshes itself; this is a no-op kept for API compatibility.
 export function advanceMockClock() {}
 
