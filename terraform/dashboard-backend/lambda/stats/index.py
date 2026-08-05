@@ -14,6 +14,8 @@ codepipeline = boto3.client('codepipeline')  # local-account client (default)
 s3 = boto3.client('s3')
 sts = boto3.client('sts')
 organizations = boto3.client('organizations')
+lambda_client = boto3.client('lambda')
+ddb = boto3.client('dynamodb')
 DATABASE = os.environ['DATABASE']
 WORKGROUP = os.environ['WORKGROUP']
 ACCOUNT_ID = os.environ['ACCOUNT_ID']
@@ -56,6 +58,11 @@ SYNTHETIC_REGIONS = [s for s in os.environ.get(
 # (minus the local + excluded list) as an additional tracked account. The
 # reader role is assumed to live in each account because the StackSet
 # created it there.
+CHAT_TABLE_NAME = os.environ.get('CHAT_TABLE_NAME', '')
+CHAT_WORKER_FUNCTION_NAME = os.environ.get('CHAT_WORKER_FUNCTION_NAME', '')
+# TTL for chat records in DynamoDB (seconds). Records auto-delete after this.
+CHAT_TTL_SECONDS = 60 * 60 * 24  # 24h
+
 ORG_ENABLED = os.environ.get('ORG_ENABLED', 'false').lower() == 'true'
 ORG_ROLE_NAME = os.environ.get('ORG_ROLE_NAME', 'PipelineDashboardReader')
 ORG_REGIONS = [r for r in os.environ.get('ORG_REGIONS', '').split(',') if r] or [REGION]
@@ -576,6 +583,123 @@ def handle_pipelines(event):
     return response(200, {'pipelines': rows, 'errors': errors})
 
 
+CHAT_MAX_QUESTION_CHARS = 2000
+CHAT_MAX_CONTEXT_CHARS = 20000
+
+
+def _parse_body(event):
+    raw_body = event.get('body') or '{}'
+    if event.get('isBase64Encoded'):
+        import base64
+        try:
+            raw_body = base64.b64decode(raw_body).decode('utf-8')
+        except Exception:
+            return None, 'invalid_body_encoding'
+    try:
+        return json.loads(raw_body), None
+    except Exception:
+        return None, 'invalid_json'
+
+
+def handle_chat_start(event):
+    """POST /chat — persist the request, invoke the worker Lambda async,
+    return {chatId} immediately so the client can poll.
+    """
+    import uuid
+
+    if not CHAT_TABLE_NAME or not CHAT_WORKER_FUNCTION_NAME:
+        return response(503, {'error': 'chat_not_configured'})
+
+    body, err = _parse_body(event)
+    if err:
+        return response(400, {'error': err})
+
+    question = (body.get('question') or '').strip()
+    pipeline_context = body.get('pipelineContext') or {}
+
+    if not question:
+        return response(400, {'error': 'question_required'})
+    if len(question) > CHAT_MAX_QUESTION_CHARS:
+        return response(400, {'error': 'question_too_long', 'maxChars': CHAT_MAX_QUESTION_CHARS})
+
+    try:
+        context_str = json.dumps(pipeline_context, default=str)
+    except Exception:
+        return response(400, {'error': 'invalid_pipeline_context'})
+    if len(context_str) > CHAT_MAX_CONTEXT_CHARS:
+        pipeline_context = json.loads(context_str[:CHAT_MAX_CONTEXT_CHARS] + '"}')  # best-effort truncate
+
+    chat_id = str(uuid.uuid4())
+    now = int(time.time())
+    expires_at = now + CHAT_TTL_SECONDS
+
+    try:
+        ddb.put_item(
+            TableName=CHAT_TABLE_NAME,
+            Item={
+                'chatId':    {'S': chat_id},
+                'status':    {'S': 'processing'},
+                'question':  {'S': question[:CHAT_MAX_QUESTION_CHARS]},
+                'createdAt': {'N': str(now)},
+                'expiresAt': {'N': str(expires_at)},
+            },
+        )
+    except Exception:
+        logger.exception('Failed to persist chat record')
+        return response(500, {'error': 'chat_persist_failed'})
+
+    try:
+        lambda_client.invoke(
+            FunctionName=CHAT_WORKER_FUNCTION_NAME,
+            InvocationType='Event',  # async
+            Payload=json.dumps({
+                'chatId': chat_id,
+                'question': question,
+                'pipelineContext': pipeline_context,
+            }).encode('utf-8'),
+        )
+    except Exception:
+        logger.exception('Failed to invoke chat worker')
+        return response(500, {'error': 'chat_worker_invoke_failed'})
+
+    return response(202, {'chatId': chat_id, 'status': 'processing'})
+
+
+def handle_chat_get(event, chat_id):
+    """GET /chat/{chatId} — return the current state of a chat request.
+    Returned shape mirrors what the worker writes: status is one of
+    'processing' | 'succeeded' | 'failed'.
+    """
+    if not CHAT_TABLE_NAME:
+        return response(503, {'error': 'chat_not_configured'})
+    if not chat_id:
+        return response(400, {'error': 'chat_id_required'})
+
+    try:
+        item = ddb.get_item(
+            TableName=CHAT_TABLE_NAME,
+            Key={'chatId': {'S': chat_id}},
+        ).get('Item')
+    except Exception:
+        logger.exception('Failed to read chat record')
+        return response(500, {'error': 'chat_read_failed'})
+
+    if not item:
+        return response(404, {'error': 'chat_not_found'})
+
+    out = {
+        'chatId': item['chatId']['S'],
+        'status': item.get('status', {}).get('S', 'unknown'),
+    }
+    if 'answer' in item:
+        out['answer'] = item['answer']['S']
+    if 'error' in item:
+        out['error'] = item['error']['S']
+    if 'agentSpaceId' in item:
+        out['agentSpaceId'] = item['agentSpaceId']['S']
+    return response(200, out)
+
+
 def handler(event, context):
     method = (event.get('requestContext', {}).get('http', {}) or {}).get('method', 'GET')
     if method == 'OPTIONS':
@@ -592,6 +716,18 @@ def handler(event, context):
             return handle_accounts(event)
         if route == '/pipelines':
             return handle_pipelines(event)
+        if route == '/chat' and method == 'POST':
+            return handle_chat_start(event)
+        # GET /chat/{chatId} — routeKey is the literal template, so pull
+        # the actual chatId from pathParameters (falls back to rawPath).
+        if method == 'GET' and (route.startswith('/chat/') or route == '/chat/{chatId}'):
+            path_params = event.get('pathParameters') or {}
+            chat_id = path_params.get('chatId')
+            if not chat_id:
+                raw_path = event.get('rawPath') or ''
+                if raw_path.startswith('/chat/'):
+                    chat_id = raw_path[len('/chat/'):]
+            return handle_chat_get(event, chat_id)
         return response(404, {'error': 'not_found'})
     except Exception as e:
         # Log the full exception, return a generic message + request id so the

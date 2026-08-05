@@ -310,10 +310,13 @@ data "aws_iam_policy_document" "enrichment_lambda" {
     actions   = ["s3:PutObject"]
     resources = ["${module.data_lake.arn}/enriched/*"]
   }
-  statement {
-    sid       = "S3ReadHostingBucket"
-    actions   = ["s3:GetObject"]
-    resources = ["arn:aws:s3:::${var.hosting_bucket}/version.json"]
+  dynamic "statement" {
+    for_each = length(var.hosting_bucket) > 0 ? [1] : []
+    content {
+      sid       = "S3ReadHostingBucket"
+      actions   = ["s3:GetObject"]
+      resources = ["arn:aws:s3:::${var.hosting_bucket}/version.json"]
+    }
   }
   statement {
     sid     = "DeadLetterQueue"
@@ -454,10 +457,13 @@ data "aws_iam_policy_document" "stats_lambda" {
     ]
     resources = ["arn:aws:codepipeline:*:${local.account_id}:*"]
   }
-  statement {
-    sid       = "S3ReadHostingBucket"
-    actions   = ["s3:GetObject"]
-    resources = ["arn:aws:s3:::${var.hosting_bucket}/version.json"]
+  dynamic "statement" {
+    for_each = length(var.hosting_bucket) > 0 ? [1] : []
+    content {
+      sid       = "S3ReadHostingBucket"
+      actions   = ["s3:GetObject"]
+      resources = ["arn:aws:s3:::${var.hosting_bucket}/version.json"]
+    }
   }
 
   # Cross-account read: lets the stats Lambda assume the configured
@@ -511,6 +517,20 @@ data "aws_iam_policy_document" "stats_lambda" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["arn:aws:logs:${local.region}:${local.account_id}:log-group:/aws/lambda/${var.project_name}-stats:*"]
   }
+
+  # Chat: read + write the chat state table, and invoke the chat worker
+  # Lambda asynchronously. Scoped to just those specific resources.
+  statement {
+    sid       = "ChatTableAccess"
+    actions   = ["dynamodb:PutItem", "dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.chat.arn]
+  }
+
+  statement {
+    sid       = "InvokeChatWorker"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [module.chat_worker_lambda.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "stats_lambda" {
@@ -528,19 +548,21 @@ module "stats_lambda" {
   timeout     = 60
   memory_size = 512
   environment = {
-    DATABASE                = module.glue_database.database_name
-    WORKGROUP               = module.athena_workgroup.name
-    ACCOUNT_ID              = local.account_id
-    REGION                  = local.region
-    HOSTING_BUCKET          = var.hosting_bucket
-    TRACKED_ACCOUNTS        = jsonencode(var.tracked_accounts)
-    SYNTHETIC_ACCOUNT_COUNT = tostring(var.synthetic_account_count)
-    SYNTHETIC_ALIASES       = join(",", local.synthetic_aliases)
-    SYNTHETIC_REGIONS       = join(",", local.synthetic_regions)
-    ORG_ENABLED             = tostring(var.tracked_organization.enabled)
-    ORG_ROLE_NAME           = var.tracked_organization.role_name
-    ORG_REGIONS             = join(",", var.tracked_organization.regions)
-    ORG_EXCLUDE_ACCOUNTS    = join(",", var.tracked_organization.exclude_account_ids)
+    DATABASE                  = module.glue_database.database_name
+    WORKGROUP                 = module.athena_workgroup.name
+    ACCOUNT_ID                = local.account_id
+    REGION                    = local.region
+    HOSTING_BUCKET            = var.hosting_bucket
+    TRACKED_ACCOUNTS          = jsonencode(var.tracked_accounts)
+    SYNTHETIC_ACCOUNT_COUNT   = tostring(var.synthetic_account_count)
+    SYNTHETIC_ALIASES         = join(",", local.synthetic_aliases)
+    SYNTHETIC_REGIONS         = join(",", local.synthetic_regions)
+    ORG_ENABLED               = tostring(var.tracked_organization.enabled)
+    ORG_ROLE_NAME             = var.tracked_organization.role_name
+    ORG_REGIONS               = join(",", var.tracked_organization.regions)
+    ORG_EXCLUDE_ACCOUNTS      = join(",", var.tracked_organization.exclude_account_ids)
+    CHAT_TABLE_NAME           = aws_dynamodb_table.chat.name
+    CHAT_WORKER_FUNCTION_NAME = module.chat_worker_lambda.name
     # CORS allow-origin echoed in every Lambda response. The dashboard runs
     # locally via Vite (which proxies + signs requests with SigV4), so the
     # browser never hits API Gateway directly. We still set this for
@@ -563,7 +585,10 @@ module "stats_api" {
     "GET /stats",
     "GET /pipelines",
     "GET /accounts",
+    "POST /chat",
+    "GET /chat/{chatId}",
   ]
+  cors_allow_methods = ["GET", "POST", "OPTIONS"]
 }
 
 # ============================================================
