@@ -5,9 +5,8 @@ variable "region" {
 }
 
 variable "central_account_id" {
-  description = "The 12-digit AWS account ID where the dashboard's stats Lambda runs."
+  description = "The 12-digit AWS account ID where the dashboard's stats Lambda runs. No default — must be provided by the operator."
   type        = string
-  default     = "111122223333"
   validation {
     condition     = can(regex("^[0-9]{12}$", var.central_account_id))
     error_message = "central_account_id must be a 12-digit AWS account ID."
@@ -15,9 +14,14 @@ variable "central_account_id" {
 }
 
 variable "central_lambda_role_arn" {
-  description = "ARN of the central account's stats Lambda role. The created role's trust policy is locked down to this principal."
+  description = <<-EOT
+    Optional override for the central stats Lambda role ARN that this role
+    trusts. When left empty (default), it is computed as:
+      arn:aws:iam::<central_account_id>:role/pipeline-dashboard-stats-lambda-role
+    Only override this if you renamed the role in terraform/dashboard-backend.
+  EOT
   type        = string
-  default     = "arn:aws:iam::111122223333:role/pipeline-dashboard-stats-lambda-role"
+  default     = ""
 }
 
 variable "role_name" {

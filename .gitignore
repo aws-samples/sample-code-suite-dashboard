@@ -36,8 +36,8 @@ build/
 # CloudFormation packaging output (regenerated each deploy)
 cloudformation/**/.packaged*.yaml
 
-# Local-only engineering doc
-CHEATSHEET.md
+# Lambda build artifacts (produced by `make deploy-dashboard`)
+terraform/modules/lambda/.build/
 
 # Blog post draft (local-only)
 *.docx
