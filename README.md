@@ -210,3 +210,11 @@ Highlights of the project style guide:
 - Never hardcode `VITE_API_URL` — it comes from the `.env` at build time.
 - Never commit `.env`, `*.tfvars` with secrets, or `terraform.tfstate*` —
   already gitignored.
+
+## Security
+
+See [SECURITY](SECURITY.md) for how to report security issues.
+
+## License
+
+This library is licensed under the MIT-0 License. See the [LICENSE](LICENSE) file.

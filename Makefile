@@ -9,7 +9,9 @@ AWS_REGION ?= us-east-1
 TF_DIR ?= terraform/dashboard-backend
 
 # Demo content lives outside this workspace to keep the product folder clean.
-DEMOS_DIR ?= $(HOME)/Desktop/dashboard-demos
+# Override with `make ... DEMOS_DIR=/path/to/your/demos` if you want a
+# different location. Defaults to a sibling directory next to the repo.
+DEMOS_DIR ?= $(abspath $(CURDIR)/../aws-code-suite-observability-demos)
 
 # Demo-pipelines repo sync config
 RepoName   ?= demo-pipelines-monorepo
