@@ -14,6 +14,7 @@ codepipeline = boto3.client('codepipeline')  # local-account client (default)
 s3 = boto3.client('s3')
 sts = boto3.client('sts')
 organizations = boto3.client('organizations')
+bedrock_runtime = boto3.client('bedrock-runtime')
 DATABASE = os.environ['DATABASE']
 WORKGROUP = os.environ['WORKGROUP']
 ACCOUNT_ID = os.environ['ACCOUNT_ID']
@@ -56,6 +57,8 @@ SYNTHETIC_REGIONS = [s for s in os.environ.get(
 # (minus the local + excluded list) as an additional tracked account. The
 # reader role is assumed to live in each account because the StackSet
 # created it there.
+BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-pro-v1:0')
+
 ORG_ENABLED = os.environ.get('ORG_ENABLED', 'false').lower() == 'true'
 ORG_ROLE_NAME = os.environ.get('ORG_ROLE_NAME', 'PipelineDashboardReader')
 ORG_REGIONS = [r for r in os.environ.get('ORG_REGIONS', '').split(',') if r] or [REGION]
@@ -576,6 +579,84 @@ def handle_pipelines(event):
     return response(200, {'pipelines': rows, 'errors': errors})
 
 
+CHAT_SYSTEM_PROMPT = (
+    "You are a helpful AI assistant embedded in a CodePipeline observability "
+    "dashboard. The user is looking at one specific pipeline execution and "
+    "wants to understand what is happening.\n\n"
+    "Answer based ONLY on the pipeline context provided in the user message. "
+    "Be concise, specific, and actionable. Prefer short paragraphs over long "
+    "walls of text. If the context does not contain enough information to "
+    "answer, say so plainly and point them to the specific AWS console page "
+    "or CloudWatch log group that would.\n\n"
+    "Do not fabricate stage names, error messages, resource IDs, or timestamps."
+)
+
+CHAT_MAX_QUESTION_CHARS = 2000
+CHAT_MAX_CONTEXT_CHARS = 20000
+CHAT_MAX_OUTPUT_TOKENS = 800
+
+
+def handle_chat(event):
+    raw_body = event.get('body') or '{}'
+    # API Gateway HTTP API sometimes ships the body base64-encoded.
+    if event.get('isBase64Encoded'):
+        import base64
+        try:
+            raw_body = base64.b64decode(raw_body).decode('utf-8')
+        except Exception:
+            return response(400, {'error': 'invalid_body_encoding'})
+    try:
+        body = json.loads(raw_body)
+    except Exception:
+        return response(400, {'error': 'invalid_json'})
+
+    question = (body.get('question') or '').strip()
+    pipeline_context = body.get('pipelineContext') or {}
+
+    if not question:
+        return response(400, {'error': 'question_required'})
+    if len(question) > CHAT_MAX_QUESTION_CHARS:
+        return response(400, {'error': 'question_too_long', 'maxChars': CHAT_MAX_QUESTION_CHARS})
+
+    try:
+        context_str = json.dumps(pipeline_context, default=str)
+    except Exception:
+        return response(400, {'error': 'invalid_pipeline_context'})
+    if len(context_str) > CHAT_MAX_CONTEXT_CHARS:
+        context_str = context_str[:CHAT_MAX_CONTEXT_CHARS] + '\n...[truncated]'
+
+    user_message = (
+        f"Pipeline context (JSON):\n{context_str}\n\n"
+        f"Question:\n{question}"
+    )
+
+    try:
+        resp = bedrock_runtime.converse(
+            modelId=BEDROCK_MODEL_ID,
+            system=[{'text': CHAT_SYSTEM_PROMPT}],
+            messages=[{'role': 'user', 'content': [{'text': user_message}]}],
+            inferenceConfig={'maxTokens': CHAT_MAX_OUTPUT_TOKENS, 'temperature': 0.2},
+        )
+    except Exception as e:
+        logger.exception('Bedrock converse failed')
+        return response(502, {'error': 'bedrock_error', 'message': str(e)[:200]})
+
+    try:
+        answer = resp['output']['message']['content'][0]['text']
+    except (KeyError, IndexError, TypeError):
+        return response(502, {'error': 'bedrock_empty_response'})
+
+    usage = resp.get('usage') or {}
+    return response(200, {
+        'answer': answer,
+        'modelId': BEDROCK_MODEL_ID,
+        'usage': {
+            'inputTokens': usage.get('inputTokens'),
+            'outputTokens': usage.get('outputTokens'),
+        },
+    })
+
+
 def handler(event, context):
     method = (event.get('requestContext', {}).get('http', {}) or {}).get('method', 'GET')
     if method == 'OPTIONS':
@@ -592,6 +673,8 @@ def handler(event, context):
             return handle_accounts(event)
         if route == '/pipelines':
             return handle_pipelines(event)
+        if route == '/chat' and method == 'POST':
+            return handle_chat(event)
         return response(404, {'error': 'not_found'})
     except Exception as e:
         # Log the full exception, return a generic message + request id so the

@@ -2,6 +2,13 @@
 # dashboard Lambda can list pipelines + builds there. Read-only by design.
 data "aws_caller_identity" "current" {}
 
+locals {
+  # Compute the central stats Lambda role ARN from central_account_id unless
+  # the operator explicitly overrode it. The conventional role name matches
+  # what terraform/dashboard-backend creates.
+  effective_central_role_arn = length(var.central_lambda_role_arn) > 0 ? var.central_lambda_role_arn : "arn:aws:iam::${var.central_account_id}:role/pipeline-dashboard-stats-lambda-role"
+}
+
 # Trust policy: only the central stats Lambda role can assume this.
 data "aws_iam_policy_document" "trust" {
   statement {
@@ -9,7 +16,7 @@ data "aws_iam_policy_document" "trust" {
     actions = ["sts:AssumeRole"]
     principals {
       type        = "AWS"
-      identifiers = [var.central_lambda_role_arn]
+      identifiers = [local.effective_central_role_arn]
     }
   }
 }

@@ -82,8 +82,32 @@ function awsSigV4Proxy(env) {
           else query[k] = [query[k], v];
         }
 
+        // For POST/PUT/PATCH, buffer the request body so SigV4 can hash it
+        // and we can forward it upstream. GET/HEAD/DELETE skip this.
+        const hasBody = !['GET', 'HEAD', 'DELETE', 'OPTIONS'].includes(
+          (req.method || 'GET').toUpperCase()
+        );
+        let bodyBuffer;
+        if (hasBody) {
+          bodyBuffer = await new Promise((resolve, reject) => {
+            const chunks = [];
+            req.on('data', (chunk) => chunks.push(chunk));
+            req.on('end', () => resolve(Buffer.concat(chunks)));
+            req.on('error', reject);
+          });
+        }
+
         const upstreamPath =
           apiUrl.pathname.replace(/\/$/, '') + incoming.pathname;
+
+        const upstreamHeaders = {
+          host: apiUrl.hostname,
+          accept: 'application/json',
+        };
+        if (hasBody && bodyBuffer && bodyBuffer.length > 0) {
+          upstreamHeaders['content-type'] =
+            req.headers['content-type'] || 'application/json';
+        }
 
         const upstream = new HttpRequest({
           method: req.method || 'GET',
@@ -92,10 +116,8 @@ function awsSigV4Proxy(env) {
           port: apiUrl.port ? Number(apiUrl.port) : undefined,
           path: upstreamPath,
           query,
-          headers: {
-            host: apiUrl.hostname,
-            accept: 'application/json',
-          },
+          headers: upstreamHeaders,
+          body: hasBody && bodyBuffer ? bodyBuffer : undefined,
         });
 
         try {
@@ -112,6 +134,7 @@ function awsSigV4Proxy(env) {
           const upstreamRes = await fetch(finalUrl, {
             method: signed.method,
             headers: signed.headers,
+            body: hasBody && bodyBuffer ? bodyBuffer : undefined,
           });
 
           res.statusCode = upstreamRes.status;

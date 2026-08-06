@@ -19,10 +19,11 @@ Parameters:
 
   HostingBucket:
     Type: String
-    Default: react-cicd-hosting-795065187596
+    Default: ""
     Description: >
-      Name of the React app's hosting bucket (for reading version.json).
-      Only used by the Lambda runtime — not created here.
+      Optional S3 bucket that hosts a `version.json` marker file for the
+      deployed dashboard build. Only used by the Lambda runtime — not
+      created here. Leave blank if you run the dashboard locally.
 
   CorsAllowOrigin:
     Type: String
@@ -90,6 +91,7 @@ Parameters:
 
 Conditions:
   OrgEnabledCondition: !Equals [!Ref OrgEnabled, "true"]
+  HasHostingBucketCondition: !Not [!Equals [!Ref HostingBucket, ""]]
 
 Resources:
   # ============================================================
@@ -448,10 +450,13 @@ Resources:
                 Effect: Allow
                 Action: s3:PutObject
                 Resource: !Sub "${DataLakeBucket.Arn}/enriched/*"
-              - Sid: S3ReadHostingBucket
-                Effect: Allow
-                Action: s3:GetObject
-                Resource: !Sub "arn:aws:s3:::${HostingBucket}/version.json"
+              - !If
+                - HasHostingBucketCondition
+                - Sid: S3ReadHostingBucket
+                  Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub "arn:aws:s3:::${HostingBucket}/version.json"
+                - !Ref AWS::NoValue
               - Sid: DeadLetterQueue
                 Effect: Allow
                 Action: sqs:SendMessage
@@ -594,10 +599,13 @@ Resources:
               - codepipeline:GetPipelineState
               - codepipeline:ListPipelineExecutions
             Resource: !Sub "arn:aws:codepipeline:*:${AWS::AccountId}:*"
-          - Sid: S3ReadHostingBucket
-            Effect: Allow
-            Action: s3:GetObject
-            Resource: !Sub "arn:aws:s3:::${HostingBucket}/version.json"
+          - !If
+            - HasHostingBucketCondition
+            - Sid: S3ReadHostingBucket
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "arn:aws:s3:::${HostingBucket}/version.json"
+            - !Ref AWS::NoValue
           - Sid: CloudWatchLogs
             Effect: Allow
             Action:

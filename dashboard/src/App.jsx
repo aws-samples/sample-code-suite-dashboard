@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { BarChart, Bar, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import * as pipelineService from './pipelineService.js';
+import ChatDrawer from './ChatDrawer.jsx';
 
 const REFRESH_INTERVAL_MS = 30_000;
 
@@ -875,6 +876,7 @@ export default function App() {
           </section>
         </main>
       </div>
+      <ChatDrawer pipelines={pipelines} />
     </div>
   );
 }
