@@ -14,6 +14,11 @@ Captures every pipeline execution and build event into a central data lake,
 enriches it with per-stage detail, exposes it through an IAM-authorized HTTP
 API, and renders it locally with a React UI.
 
+The dashboard also embeds an **AWS DevOps Agent** chat, so users can ask
+natural-language questions about a specific pipeline ("why is this
+failing?", "which stage is the bottleneck?") and get answers backed by
+the agent's live investigation of AWS resources.
+
 The infrastructure can be deployed two ways — pick one:
 
 - **Terraform** (`terraform/`) — the canonical source of truth.
@@ -39,6 +44,11 @@ Both deploy paths produce the same architecture and can be used independently.
 │        │                                                                 │
 │        └── sts:AssumeRole ──► PipelineDashboardReader role               │
 │                                  in each tracked account                 │
+│                                                                          │
+│   Chat feature:                                                          │
+│     POST /chat  ─►  DynamoDB (chat state)                                │
+│                  ─►  Chat Worker Lambda ─► AWS DevOps Agent AgentSpace   │
+│     GET  /chat/{chatId}  ─►  DynamoDB (poll for answer)                  │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -178,6 +188,88 @@ target account and adds the account to `tracked_accounts` in the central
 stack. The second form uses CloudFormation StackSets to push the role to every
 account in the org and lets the stats Lambda enumerate them at runtime.
 
+## DevOps Agent chat
+
+The dashboard ships with a chat drawer (bottom-right of the UI) that talks
+to [AWS DevOps Agent](https://aws.amazon.com/devops-agent/) via a
+dedicated worker Lambda. Users pick a pipeline, ask a question, and the
+agent investigates the live AWS environment to answer — for example:
+
+- "Why is this pipeline failing?"
+- "Which stage is the bottleneck?"
+- "Look at the latest CodeBuild logs and summarize the error."
+- "What changed since the last successful run?"
+
+### How it works
+
+Because DevOps Agent investigations can take longer than API Gateway's
+30-second integration timeout, the chat uses an async request-response
+pattern:
+
+```
+POST /chat
+  ├─ persist { chatId, status: "processing" } to DynamoDB
+  ├─ invoke chat-worker Lambda (async)
+  └─ return { chatId } immediately
+
+chat-worker Lambda
+  ├─ devops-agent:CreateChat   (against the AgentSpace)
+  ├─ devops-agent:SendMessage  (streaming EventStream)
+  ├─ accumulate text deltas until responseCompleted
+  └─ UpdateItem { status: "succeeded", answer } in DynamoDB
+
+GET /chat/{chatId}
+  └─ return current DynamoDB state (the UI polls every 2s)
+```
+
+The chat state table (`pipeline-dashboard-chat`) has a 24-hour TTL, so
+records auto-delete.
+
+### What gets deployed
+
+The Terraform stack (`terraform/dashboard-backend/`) creates:
+
+- `awscc_devopsagent_agent_space.this` — the AgentSpace itself. Uses the
+  `awscc` provider because `aws_devopsagent_*` resources are only
+  available via AWS Cloud Control API.
+- `awscc_devopsagent_association.primary_aws_account` — links the
+  AgentSpace to the current AWS account so the agent can investigate
+  local CodePipeline / CodeBuild resources.
+- Two IAM roles (both trusted by `aidevops.amazonaws.com`):
+  - `<project>-devops-agentspace-<hash>` — the monitoring role, attached
+    to the AWS-managed `AIDevOpsAgentAccessPolicy`.
+  - `<project>-devops-operator-<hash>` — the operator app role, attached
+    to `AIDevOpsOperatorAppAccessPolicy`.
+- A DynamoDB table with TTL (`pipeline-dashboard-chat`).
+- The chat-worker Lambda (`pipeline-dashboard-chat-worker`) and its role,
+  scoped to `aidevops:CreateChat` + `aidevops:SendMessage` on this
+  AgentSpace's ARN only.
+- Two new API routes on the existing HTTP API: `POST /chat` and
+  `GET /chat/{chatId}`, both `AWS_IAM`-authorized.
+
+### Prerequisites
+
+- **AWS DevOps Agent must be enabled** in the deployment account and
+  region. It's a managed service — enable it once via the AWS console
+  before `terraform apply`.
+- The deploying IAM identity needs `devops-agent:CreateAgentSpace`,
+  `iam:PassRole`, and the standard `awscc` permissions.
+- Available regions (at time of writing): `us-east-1`, `us-west-2`,
+  `ap-southeast-2`, `ap-northeast-1`, `eu-west-1`, `eu-central-1`.
+
+### Cost
+
+DevOps Agent is billed per investigation and is not free. Bounds on the
+demo:
+
+- The chat Lambda's IAM is scoped to a single AgentSpace ARN.
+- The worker Lambda has a 5-minute timeout (`timeout = 300`).
+- Chat records TTL out after 24 hours.
+
+Estimate cost with the [AWS DevOps Agent pricing
+page](https://aws.amazon.com/devops-agent/pricing/) before enabling in a
+production account.
+
 ## Security model
 
 - **API:** every route on the HTTP API has `AuthorizationType: AWS_IAM`.
@@ -195,6 +287,12 @@ account in the org and lets the stats Lambda enumerate them at runtime.
 - **Lambdas:** AWS-managed encryption on env vars + CloudWatch logs.
   No Function URLs. Permissions scoped to specific resource ARNs where
   AWS supports it.
+- **DevOps Agent:** the chat-worker Lambda's IAM allows only
+  `aidevops:CreateChat` and `aidevops:SendMessage`, scoped to this
+  project's AgentSpace ARN — it cannot start investigations against any
+  other AgentSpace. The AgentSpace's own monitoring role
+  (`AIDevOpsAgentAccessPolicy`) is read-only. The chat state table is
+  encrypted at rest and auto-expires records after 24 hours.
 
 ## Common operations
 
