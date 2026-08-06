@@ -1,5 +1,14 @@
 # aws-code-observability-dashboard
 
+> [!WARNING]
+> **This is sample code, not production-ready software.** It is provided as-is
+> for demonstration and learning purposes. Before using any of it in a
+> production environment you should review and harden the security posture
+> (IAM scoping, encryption keys, logging, network isolation), add automated
+> tests, plan for scale and cost, and validate that it meets your
+> organization's operational and compliance requirements. No warranty is
+> made regarding fitness for a particular purpose. See [LICENSE](LICENSE).
+
 A cross-account observability dashboard for AWS CodePipeline + CodeBuild.
 Captures every pipeline execution and build event into a central data lake,
 enriches it with per-stage detail, exposes it through an IAM-authorized HTTP
