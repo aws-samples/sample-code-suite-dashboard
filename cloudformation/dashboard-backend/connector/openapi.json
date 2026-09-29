@@ -1,0 +1,270 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "AWS Code Suite Observability Connector",
+    "description": "Read-only connector for the AWS Code Suite observability dashboard. Exposes pipeline statistics, tracked accounts, a paginated pipeline list, and per-pipeline detail for use by an app in Amazon Quick.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://REPLACE_API_ID.execute-api.REPLACE_REGION.amazonaws.com/connector",
+      "description": "Connector base URL. Replace with the ConnectorBaseUrl stack output."
+    }
+  ],
+  "security": [
+    {
+      "oauth2ClientCredentials": ["pipeline-dashboard/read"]
+    }
+  ],
+  "paths": {
+    "/stats": {
+      "get": {
+        "operationId": "getStats",
+        "description": "Get aggregate pipeline statistics: total pipelines, currently running count, failures in the last 24 hours, success rate percentage, and total runs in the last 24 hours. Takes no parameters.",
+        "responses": {
+          "200": {
+            "description": "Aggregate statistics for all tracked pipelines.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "total": { "type": "integer", "description": "Total number of distinct pipelines." },
+                    "running": { "type": "integer", "description": "Pipelines currently in progress." },
+                    "failed24h": { "type": "integer", "description": "Pipeline runs that failed in the last 24 hours." },
+                    "successRate": { "type": "integer", "description": "Percentage of runs in the last 24 hours that succeeded." },
+                    "runs24h": { "type": "integer", "description": "Total pipeline runs in the last 24 hours." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/accounts": {
+      "get": {
+        "operationId": "getAccounts",
+        "description": "List the AWS accounts whose pipelines are tracked by this dashboard. Returns one page of accounts; pass the returned nextToken to fetch the next page.",
+        "parameters": [
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "description": "Number of accounts to return per page. Default 25, maximum 100.",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "nextToken",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination token from a previous getAccounts response. Omit for the first page.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of tracked accounts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "description": "Accounts in this page.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string", "description": "Account identifier in the form aws-<account-id>." },
+                          "alias": { "type": "string", "description": "Friendly account alias." },
+                          "region": { "type": "string", "description": "AWS region for this account entry." }
+                        }
+                      }
+                    },
+                    "nextToken": { "type": "string", "description": "Token for the next page, or empty string when there are no more pages." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines": {
+      "get": {
+        "operationId": "getPipelines",
+        "description": "List pipelines as flat summaries across all tracked accounts. Supports optional filtering by account and status, and pagination. Use getPipeline to retrieve the stages and history for one pipeline.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "query",
+            "required": false,
+            "description": "Filter to a single account. Use the account id in the form aws-<account-id> as returned by getAccounts.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Filter by pipeline status. One of Succeeded, InProgress, Failed, or Stopped.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "description": "Number of pipeline summaries to return per page. Default 25, maximum 100.",
+            "schema": { "type": "integer" }
+          },
+          {
+            "name": "nextToken",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination token from a previous getPipelines response. Omit for the first page.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of pipeline summaries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "description": "Pipeline summaries in this page.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "accountId": { "type": "string", "description": "Account identifier in the form aws-<account-id>." },
+                          "accountAlias": { "type": "string", "description": "Friendly account alias." },
+                          "region": { "type": "string", "description": "AWS region of the pipeline." },
+                          "name": { "type": "string", "description": "Pipeline name." },
+                          "repository": { "type": "string", "description": "Source repository, or an em dash when unknown." },
+                          "branch": { "type": "string", "description": "Source branch." },
+                          "triggerType": { "type": "string", "description": "How the pipeline was triggered: GitTag, BranchMerge, Manual, or Schedule." },
+                          "status": { "type": "string", "description": "Overall pipeline status: Succeeded, InProgress, Failed, or Stopped." },
+                          "version": { "type": "string", "description": "Deployed version or short commit identifier." },
+                          "lastRunStart": { "type": "integer", "description": "Start time of the most recent run, in epoch milliseconds." },
+                          "durationMs": { "type": "integer", "description": "Duration of the most recent run, in milliseconds." },
+                          "stageCount": { "type": "integer", "description": "Number of stages in the pipeline." },
+                          "logsUrl": { "type": "string", "description": "Deep link to the pipeline in the AWS console." }
+                        }
+                      }
+                    },
+                    "nextToken": { "type": "string", "description": "Token for the next page, or empty string when there are no more pages." },
+                    "errorCount": { "type": "integer", "description": "Number of accounts that could not be queried for this response." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/pipelines/{accountId}/{pipelineName}": {
+      "get": {
+        "operationId": "getPipeline",
+        "description": "Get detail for one pipeline, including its stages and recent run history. Use the accountId and name from a getPipelines summary.",
+        "parameters": [
+          {
+            "name": "accountId",
+            "in": "path",
+            "required": true,
+            "description": "Account identifier in the form aws-<account-id>.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "pipelineName",
+            "in": "path",
+            "required": true,
+            "description": "Pipeline name.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detail for one pipeline.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "accountId": { "type": "string", "description": "Account identifier in the form aws-<account-id>." },
+                    "accountAlias": { "type": "string", "description": "Friendly account alias." },
+                    "region": { "type": "string", "description": "AWS region of the pipeline." },
+                    "name": { "type": "string", "description": "Pipeline name." },
+                    "repository": { "type": "string", "description": "Source repository, or an em dash when unknown." },
+                    "branch": { "type": "string", "description": "Source branch." },
+                    "triggerType": { "type": "string", "description": "How the pipeline was triggered: GitTag, BranchMerge, Manual, or Schedule." },
+                    "status": { "type": "string", "description": "Overall pipeline status: Succeeded, InProgress, Failed, or Stopped." },
+                    "version": { "type": "string", "description": "Deployed version or short commit identifier." },
+                    "lastRunStart": { "type": "integer", "description": "Start time of the most recent run, in epoch milliseconds." },
+                    "durationMs": { "type": "integer", "description": "Duration of the most recent run, in milliseconds." },
+                    "logsUrl": { "type": "string", "description": "Deep link to the pipeline in the AWS console." },
+                    "stages": {
+                      "type": "array",
+                      "description": "Ordered pipeline stages.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string", "description": "Stage name." },
+                          "status": { "type": "string", "description": "Stage status: Succeeded, InProgress, Failed, or Stopped." },
+                          "url": { "type": "string", "description": "Deep link to the stage execution, or empty string." }
+                        }
+                      }
+                    },
+                    "history": {
+                      "type": "array",
+                      "description": "Recent run history, oldest first.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "status": { "type": "string", "description": "Run status: Succeeded, InProgress, Failed, or Stopped." },
+                          "durationMs": { "type": "integer", "description": "Run duration in milliseconds." },
+                          "startTime": { "type": "integer", "description": "Run start time in epoch milliseconds." }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No pipeline matched the given accountId and pipelineName.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string", "description": "Error code, e.g. pipeline_not_found." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "oauth2ClientCredentials": {
+        "type": "oauth2",
+        "description": "OAuth 2.0 client credentials grant. Use the ConnectorClientId and client secret from the deployed stack; token URL is the ConnectorTokenUrl output.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "https://REPLACE_DOMAIN_PREFIX.auth.REPLACE_REGION.amazoncognito.com/oauth2/token",
+            "scopes": {
+              "pipeline-dashboard/read": "Read-only access to pipeline dashboard connector routes."
+            }
+          }
+        }
+      }
+    }
+  }
+}
