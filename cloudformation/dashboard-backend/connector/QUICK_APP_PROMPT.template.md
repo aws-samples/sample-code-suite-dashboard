@@ -74,7 +74,68 @@ Design tokens taken from that file (AWS Cloudscape-like):
 
 ---
 
-## Phase 1 — App shell + Overview
+## Two ways to build
+
+- **Option A - Single prompt (fastest):** paste the one combined prompt below
+  and let the agent build the whole app at once. Good for this 3-view dashboard;
+  verify the result end to end.
+- **Option B - Phased (most reliable):** paste Phase 1, 2, 3 one at a time,
+  verifying each. Amazon Quick's docs note the agent loses accuracy on long
+  prompts and recommend phasing for complex apps, so fall back to this if the
+  single prompt comes out incomplete, mocks data, or gets a view wrong.
+
+Both produce the same app. Start with A; drop to B if A disappoints.
+
+---
+
+## Option A - Single prompt
+
+> Build a pipeline observability dashboard titled "CodeDashboard", using my
+> connector actions `getStats`, `getAccounts`, `getPipelines`, and `getPipeline`
+> for all data - do not mock or hardcode any data. Use a light, data-dense AWS
+> Cloudscape-style layout: white cards on a `#f7f8f8` background, hairline
+> `#e9ebed` borders, text `#16191f`, links `#0972d3`, accent orange `#ec7211`.
+> Status colors: Succeeded `#037f0c`, InProgress `#0073bb`, Failed `#d91515`,
+> Stopped `#5f6b7a`. Small type (12-13px body, 28px stat numbers), monospace
+> tabular numerals for versions, durations, and timestamps.
+>
+> (1) Overview: a row of four stat tiles from `getStats` - Total pipelines
+> (`total`), Running (`running`, blue), Failed 24h (`failed24h`, red), Success
+> rate (`successRate`, green, as a percentage with `runs24h` as the subtitle "N
+> runs in last 24h"). Refresh every 30s with an "updated Ns ago" indicator and a
+> manual refresh. Handle loading (skeleton), empty (zero state), and error
+> (non-blocking banner, keep last good values).
+>
+> (2) Pipelines list: cards from `getPipelines`, paginated via `pageSize` (25)
+> and `nextToken` with a "Load more" control; show "N accounts unreachable" when
+> `errorCount` > 0. Each card: `name` as a bold link to `logsUrl` (new tab); an
+> account chip (`accountAlias` + last segment of `accountId`); `repository`
+> (monospace) and a `branch` tag; a status badge from `status` (InProgress
+> pulses); a trigger label from `triggerType` (GitTag = "Git tag push",
+> BranchMerge = "Branch merge", Manual = "Manual run", Schedule = "Scheduled");
+> a three-up row of Version (`version`), Last run (relative time from
+> `lastRunStart` epoch ms), Duration (`durationMs` as m/s); and a "Stages" strip
+> of `stageCount` segments. Add an account filter (`accountId`) and a status
+> filter (`status`); make the "Failed 24h" tile click through to the Failed
+> filter.
+>
+> (3) Pipeline detail: when a card is opened, call `getPipeline` with its
+> `accountId` and `name` and show a stage stepper (ordered `stages`, colored by
+> status, each linking to its `url` when present), a run-history sparkline (from
+> `history`, oldest first, colored by status, sized by `durationMs`), and a
+> success-rate summary (Succeeded / total from `history`). Keep it visually
+> consistent with the cards.
+
+Verify end to end: real numbers in the tiles, three pipeline cards with real
+versions/durations, filters work, and a pipeline opens to show stages + history.
+If any part is missing or shows mocked data, rebuild that part with the matching
+phase below.
+
+---
+
+## Option B - Phased build
+
+### Phase 1 - App shell + Overview
 
 > Build a pipeline observability dashboard titled "CodeDashboard".
 > Use a light,
@@ -96,7 +157,7 @@ Verify the four tiles render and refresh before continuing.
 
 ---
 
-## Phase 2 — Pipelines list
+### Phase 2 - Pipelines list
 
 > Below the Overview, add a **Pipelines** section that lists pipelines from the
 > `getPipelines` action as cards (one per pipeline). Paginate with the action's
@@ -125,7 +186,7 @@ Verify the list renders, filters work, and pagination advances.
 
 ---
 
-## Phase 3 — Pipeline detail (stages + history)
+### Phase 3 - Pipeline detail (stages + history)
 
 > When a pipeline card is opened, call `getPipeline` with its `accountId` and
 > `name` to load detail. Render:
