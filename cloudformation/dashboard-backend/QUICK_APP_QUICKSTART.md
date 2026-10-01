@@ -33,7 +33,17 @@ export CONNECTOR_DOMAIN_PREFIX=pipeline-dashboard-$(aws sts get-caller-identity 
 export CFN_PKG_BUCKET=aws-code-observability-cfn-artifacts-$(aws sts get-caller-identity --query Account --output text)-${CFN_REGION}
 aws s3 mb "s3://$CFN_PKG_BUCKET" --region "$CFN_REGION"
 
-# 2. Package + deploy (from cloudformation/dashboard-backend)
+# 2. Package + deploy the backend WITH the connector turned on.
+#    Prefer the Makefile target (run from the repo root):
+make deploy-cfn-connector \
+  CFN_PKG_BUCKET="$CFN_PKG_BUCKET" \
+  CFN_REGION="$CFN_REGION" \
+  CONNECTOR_DOMAIN_PREFIX="$CONNECTOR_DOMAIN_PREFIX"
+```
+
+<details><summary>Raw CLI equivalent (if you're not using the Makefile)</summary>
+
+```bash
 cd cloudformation/dashboard-backend
 aws cloudformation package \
   --template-file template.yaml --s3-bucket "$CFN_PKG_BUCKET" \
@@ -44,6 +54,7 @@ aws cloudformation deploy \
   --parameter-overrides ConnectorAuthDomainPrefix="$CONNECTOR_DOMAIN_PREFIX" \
   --region "$CFN_REGION"
 ```
+</details>
 
 **(Optional) sample pipelines** so the dashboard has data to show:
 
@@ -69,7 +80,8 @@ done
 ## Part 2 - Render the connector artifacts
 
 ```bash
-python3 scripts/render_quick_app.py --stack-name "$CFN_STACK_NAME"
+make render-quick-app CFN_REGION="$CFN_REGION"
+# raw equivalent: python3 scripts/render_quick_app.py --stack-name "$CFN_STACK_NAME" --region "$CFN_REGION"
 ```
 
 Writes (gitignored, account-specific):
@@ -157,8 +169,9 @@ connector-backed app).
 
 **AWS backend (scripted):**
 ```bash
-scripts/destroy_backend.sh            # dry run - shows what would be deleted
-scripts/destroy_backend.sh --yes      # actually delete (empties buckets, deletes both stacks)
+make destroy-cfn-connector CFN_REGION="$CFN_REGION"            # dry run - shows what would be deleted
+make destroy-cfn-connector CFN_REGION="$CFN_REGION" CONFIRM=yes # actually delete (empties buckets, deletes both stacks)
+# raw equivalent: scripts/destroy_backend.sh [--yes]
 ```
 
 See `CONNECTOR_TEARDOWN.md` for details and the manual CLI equivalent.
