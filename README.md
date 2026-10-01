@@ -29,6 +29,12 @@ Both deploy paths produce the same architecture and can be used independently.
 
 ## Architecture
 
+![Architecture of the AWS Code Suite observability dashboard: CodePipeline and CodeBuild events flow through EventBridge to Firehose and an enrichment Lambda into an S3 data lake cataloged by Glue and queried by Athena; a stats Lambda serves an IAM-authorized HTTP API consumed by the local React dashboard, with cross-account reader roles and a DevOps Agent chat path.](docs/diagrams/architecture_diagram.png)
+
+Diagrams are generated with the [`diagrams`](https://diagrams.mingrammer.com/)
+library; see [`docs/diagrams/`](docs/diagrams/) for the source scripts and how to
+regenerate them. The text version below is kept as a quick reference.
+
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
 │ Central account                                                          │
@@ -56,6 +62,19 @@ The dashboard UI runs locally on `http://localhost:5173`. The Vite dev server
 proxies `/api/*` to the HTTP API and signs every request with SigV4 using the
 developer's local AWS credentials — the browser never sees AWS credentials and
 the API never accepts unsigned requests.
+
+### Alternative frontend: an app in Amazon Quick
+
+The same backend can also drive a dashboard built as an **app in Amazon Quick**,
+reached through an OAuth2-authorized OpenAPI **connector** instead of the local
+Vite + SigV4 proxy (the Quick sandbox cannot sign SigV4 requests). This path
+adds a Cognito-backed JWT authorizer and a set of flat, paginated
+`/connector/*` routes alongside the existing IAM routes.
+
+![Connector-only architecture: an app in Amazon Quick calls an OpenAPI action connector authenticated with OAuth2 client credentials, which reaches a JWT-authorized HTTP API and the stats Lambda over the same data lake and ingestion backend, with no QuickSight dataset.](docs/diagrams/connector_architecture_diagram.png)
+
+See [`cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md`](cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md)
+for the end-to-end deploy-and-build walkthrough.
 
 ## Repo layout
 
