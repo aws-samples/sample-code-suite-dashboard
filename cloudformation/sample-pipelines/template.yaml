@@ -1,0 +1,365 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Three demo CodePipelines (Python API, Node API, static site) so the
+  dashboard has data. Mirrors terraform/sample-pipelines/.
+
+  Note: this CFN stack does NOT auto-seed the CodeCommit repos. After
+  deploy, run `make seed-cfn-samples` (or push manually) to populate
+  each repo's main branch with the matching sample-apps/<dir>/ contents.
+  Until you do, the pipelines will show no executions.
+
+Parameters:
+  AwsRegion:
+    Type: String
+    Default: us-east-1
+    Description: >
+      DEPRECATED / ignored. The stack now derives its region from the
+      deployment region (AWS::Region) for all ARNs, so this parameter no
+      longer affects anything. Kept only for backward compatibility with
+      existing deploy scripts that pass it.
+
+  NamePrefix:
+    Type: String
+    Default: sample
+    Description: Prefix applied to every resource name.
+    AllowedPattern: ^[a-z0-9-]{1,16}$
+
+Resources:
+  # ============================================================
+  # Shared artifact bucket
+  # ============================================================
+  ArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${NamePrefix}-pipelines-artifacts-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Project
+          Value: aws-code-suite-observability
+
+  ArtifactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtifactsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: s3:*
+            Resource:
+              - !GetAtt ArtifactsBucket.Arn
+              - !Sub "${ArtifactsBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: "false"
+
+  # ============================================================
+  # CodeCommit repos — one per sample
+  # ============================================================
+  PythonApiRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub "${NamePrefix}-python-api"
+      RepositoryDescription: Flask service with pytest, demonstrates a Python build.
+
+  NodeApiRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub "${NamePrefix}-node-api"
+      RepositoryDescription: Express service with Jest, demonstrates a Node build.
+
+  StaticSiteRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Sub "${NamePrefix}-static-site"
+      RepositoryDescription: Tiny static site, demonstrates a content-only build.
+
+  # ============================================================
+  # Shared CodePipeline service role
+  # ============================================================
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${NamePrefix}-pipelines-codepipeline-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SamplePipelinesCodePipelinePolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ArtifactBucket
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Sub "${ArtifactsBucket.Arn}/*"
+              - Sid: CodeCommitSource
+                Effect: Allow
+                Action:
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:CancelUploadArchive
+                Resource:
+                  - !GetAtt PythonApiRepo.Arn
+                  - !GetAtt NodeApiRepo.Arn
+                  - !GetAtt StaticSiteRepo.Arn
+              - Sid: CodeBuildInvoke
+                Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:StopBuild
+                  - codebuild:BatchGetBuilds
+                Resource:
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${NamePrefix}-python-api-build"
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${NamePrefix}-node-api-build"
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${NamePrefix}-static-site-build"
+
+  # ============================================================
+  # Shared CodeBuild service role
+  # ============================================================
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${NamePrefix}-pipelines-codebuild-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SamplePipelinesCodeBuildPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${NamePrefix}-*"
+              - Sid: ArtifactBucket
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt ArtifactsBucket.Arn
+                  - !Sub "${ArtifactsBucket.Arn}/*"
+
+  # ============================================================
+  # CodeBuild projects + log groups (one per sample)
+  # ============================================================
+  PythonApiBuildLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${NamePrefix}-python-api-build"
+      RetentionInDays: 14
+
+  PythonApiBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: PythonApiBuildLogs
+    Properties:
+      Name: !Sub "${NamePrefix}-python-api-build"
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      Source: { Type: CODEPIPELINE }
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+        ComputeType: BUILD_GENERAL1_SMALL
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/aws/codebuild/${NamePrefix}-python-api-build"
+
+  NodeApiBuildLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${NamePrefix}-node-api-build"
+      RetentionInDays: 14
+
+  NodeApiBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: NodeApiBuildLogs
+    Properties:
+      Name: !Sub "${NamePrefix}-node-api-build"
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      Source: { Type: CODEPIPELINE }
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+        ComputeType: BUILD_GENERAL1_SMALL
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/aws/codebuild/${NamePrefix}-node-api-build"
+
+  StaticSiteBuildLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/codebuild/${NamePrefix}-static-site-build"
+      RetentionInDays: 14
+
+  StaticSiteBuild:
+    Type: AWS::CodeBuild::Project
+    DependsOn: StaticSiteBuildLogs
+    Properties:
+      Name: !Sub "${NamePrefix}-static-site-build"
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts: { Type: CODEPIPELINE }
+      Source: { Type: CODEPIPELINE }
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/amazonlinux-x86_64-standard:5.0
+        ComputeType: BUILD_GENERAL1_SMALL
+      LogsConfig:
+        CloudWatchLogs:
+          Status: ENABLED
+          GroupName: !Sub "/aws/codebuild/${NamePrefix}-static-site-build"
+
+  # ============================================================
+  # CodePipelines (one per sample)
+  # ============================================================
+  PythonApiPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${NamePrefix}-python-api-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactsBucket
+      Tags:
+        - { Key: AlertSeverity, Value: high }
+        - { Key: Sample, Value: python-api }
+        - { Key: Project, Value: aws-code-suite-observability }
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId: { Category: Source, Owner: AWS, Provider: CodeCommit, Version: "1" }
+              OutputArtifacts: [{ Name: SourceOutput }]
+              Configuration:
+                RepositoryName: !GetAtt PythonApiRepo.Name
+                BranchName: main
+                PollForSourceChanges: "false"
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1" }
+              InputArtifacts: [{ Name: SourceOutput }]
+              OutputArtifacts: [{ Name: BuildOutput }]
+              Configuration:
+                ProjectName: !Ref PythonApiBuild
+
+  NodeApiPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${NamePrefix}-node-api-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactsBucket
+      Tags:
+        - { Key: AlertSeverity, Value: medium }
+        - { Key: Sample, Value: node-api }
+        - { Key: Project, Value: aws-code-suite-observability }
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId: { Category: Source, Owner: AWS, Provider: CodeCommit, Version: "1" }
+              OutputArtifacts: [{ Name: SourceOutput }]
+              Configuration:
+                RepositoryName: !GetAtt NodeApiRepo.Name
+                BranchName: main
+                PollForSourceChanges: "false"
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1" }
+              InputArtifacts: [{ Name: SourceOutput }]
+              OutputArtifacts: [{ Name: BuildOutput }]
+              Configuration:
+                ProjectName: !Ref NodeApiBuild
+
+  StaticSitePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${NamePrefix}-static-site-pipeline"
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactsBucket
+      Tags:
+        - { Key: AlertSeverity, Value: low }
+        - { Key: Sample, Value: static-site }
+        - { Key: Project, Value: aws-code-suite-observability }
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId: { Category: Source, Owner: AWS, Provider: CodeCommit, Version: "1" }
+              OutputArtifacts: [{ Name: SourceOutput }]
+              Configuration:
+                RepositoryName: !GetAtt StaticSiteRepo.Name
+                BranchName: main
+                PollForSourceChanges: "false"
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId: { Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1" }
+              InputArtifacts: [{ Name: SourceOutput }]
+              OutputArtifacts: [{ Name: BuildOutput }]
+              Configuration:
+                ProjectName: !Ref StaticSiteBuild
+
+Outputs:
+  Pipelines:
+    Description: Comma-separated pipeline names.
+    Value: !Join
+      - ","
+      - - !Ref PythonApiPipeline
+        - !Ref NodeApiPipeline
+        - !Ref StaticSitePipeline
+
+  PythonApiRepoCloneUrl:
+    Value: !GetAtt PythonApiRepo.CloneUrlHttp
+
+  NodeApiRepoCloneUrl:
+    Value: !GetAtt NodeApiRepo.CloneUrlHttp
+
+  StaticSiteRepoCloneUrl:
+    Value: !GetAtt StaticSiteRepo.CloneUrlHttp
+
+  ArtifactBucket:
+    Value: !Ref ArtifactsBucket
