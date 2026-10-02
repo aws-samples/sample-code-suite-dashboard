@@ -27,7 +27,8 @@ BranchName ?= main
         sync-demo status pipelines logs-main logs-demo \
         open-app-url tf-fmt tf-validate \
         new-pipeline new-pipeline-dry \
-        track-account untrack-account list-tracked-accounts
+        track-account untrack-account list-tracked-accounts \
+        deploy-cfn-connector render-quick-app destroy-cfn-connector
 
 # -----------------------------------------------------------------------------
 # Help
@@ -74,6 +75,13 @@ help:
 	@echo "                                        Deploy reader role in a target account"
 	@echo "  make sync-cfn-from-tf                 Re-copy lambda/ + sample-apps/ from terraform/"
 	@echo "  make destroy-cfn-dashboard / destroy-cfn-sample-pipelines"
+	@echo ""
+	@echo "Amazon Quick connector (app frontend — see QUICK_APP_QUICKSTART.md):"
+	@echo "  make deploy-cfn-connector CONNECTOR_DOMAIN_PREFIX=<unique-prefix>"
+	@echo "                                        Deploy backend with the OAuth2 connector on"
+	@echo "  make render-quick-app                 Render connector openapi.generated.json + build prompt"
+	@echo "  make destroy-cfn-connector [CONFIRM=yes]"
+	@echo "                                        Tear down backend+samples (dry-run without CONFIRM=yes)"
 	@echo ""
 	@echo "Multi-account dashboard:"
 	@echo "  make track-account PROFILE=<other-aws-profile> ALIAS=<short-label> [REGION=us-east-1]"
@@ -344,6 +352,11 @@ disable-org-tracking:
 CFN_DIR        ?= cloudformation
 CFN_STACK_NAME ?= pipeline-dashboard
 CFN_REGION     ?= us-east-1
+# Globally-unique Cognito hosted-domain prefix for the Amazon Quick connector's
+# OAuth2 token endpoint. Empty = connector resources are NOT created (the base
+# stack is unchanged). Set it to turn the connector path on, e.g.:
+#   make deploy-cfn-connector CONNECTOR_DOMAIN_PREFIX=pipeline-dashboard-<account-id>
+CONNECTOR_DOMAIN_PREFIX ?=
 
 # Guard so we don't `aws cloudformation package` without a bucket and end up
 # with a half-rendered template referencing local paths.
@@ -460,3 +473,44 @@ destroy-cfn-dashboard:
 destroy-cfn-sample-pipelines:
 	aws cloudformation delete-stack --stack-name $(CFN_STACK_NAME)-samples --region $(CFN_REGION)
 	aws cloudformation wait stack-delete-complete --stack-name $(CFN_STACK_NAME)-samples --region $(CFN_REGION)
+
+# -----------------------------------------------------------------------------
+# Amazon Quick connector (OAuth2 + JWT) — Part 2 frontend path.
+# See cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md for the full
+# deploy-and-build walkthrough.
+# -----------------------------------------------------------------------------
+
+# Deploy the backend WITH the connector resources turned on. Same as
+# deploy-cfn-dashboard but sets ConnectorAuthDomainPrefix.
+deploy-cfn-connector: _require-pkg-bucket
+	@if [ -z "$(CONNECTOR_DOMAIN_PREFIX)" ]; then \
+	  echo "ERROR: CONNECTOR_DOMAIN_PREFIX is not set (globally-unique Cognito domain prefix)."; \
+	  echo "  e.g. make deploy-cfn-connector CONNECTOR_DOMAIN_PREFIX=pipeline-dashboard-$$(aws sts get-caller-identity --query Account --output text)"; \
+	  exit 1; \
+	fi
+	@echo ">> Packaging $(CFN_DIR)/dashboard-backend/template.yaml"
+	aws cloudformation package \
+	  --template-file $(CFN_DIR)/dashboard-backend/template.yaml \
+	  --s3-bucket $(CFN_PKG_BUCKET) \
+	  --output-template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
+	  --region $(CFN_REGION)
+	@echo ">> Deploying stack $(CFN_STACK_NAME) with connector (prefix=$(CONNECTOR_DOMAIN_PREFIX))"
+	aws cloudformation deploy \
+	  --stack-name $(CFN_STACK_NAME) \
+	  --template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
+	  --capabilities CAPABILITY_NAMED_IAM \
+	  --parameter-overrides ConnectorAuthDomainPrefix=$(CONNECTOR_DOMAIN_PREFIX) \
+	  --region $(CFN_REGION)
+	@aws cloudformation describe-stacks --stack-name $(CFN_STACK_NAME) --region $(CFN_REGION) \
+	  --query 'Stacks[0].Outputs[?starts_with(OutputKey, `Connector`)].{Key:OutputKey,Value:OutputValue}' --output table
+
+# Render the import-ready connector OpenAPI spec + Quick app build prompt from
+# the deployed stack outputs (writes connector/*.generated.* — gitignored).
+render-quick-app:
+	python3 scripts/render_quick_app.py --stack-name $(CFN_STACK_NAME) --region $(CFN_REGION)
+
+# Tear down the backend + samples (empties S3 buckets first). Dry-run by
+# default; pass CONFIRM=yes to actually delete. The Quick app + connector must
+# be deleted manually in the Quick console (see CONNECTOR_TEARDOWN.md).
+destroy-cfn-connector:
+	scripts/destroy_backend.sh --region $(CFN_REGION) $(if $(filter yes,$(CONFIRM)),--yes,)

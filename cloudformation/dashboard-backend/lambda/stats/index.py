@@ -1,3 +1,4 @@
+import base64
 import copy
 import json
 import os
@@ -531,6 +532,14 @@ def _list_pipelines_for_account(cp_client):
 
 
 def handle_pipelines(event):
+    rows, errors = _collect_all_pipeline_rows()
+    return response(200, {'pipelines': rows, 'errors': errors})
+
+
+def _collect_all_pipeline_rows():
+    """Assemble full pipeline rows across the local account, tracked accounts,
+    org-discovered accounts, and synthetic accounts. Returns (rows, errors).
+    Shared by the legacy /pipelines handler and the connector handlers."""
     deployed_version = get_deployed_version()
     rows = []
     errors = []
@@ -576,7 +585,170 @@ def handle_pipelines(event):
                 'error': 'unreachable',
             })
 
-    return response(200, {'pipelines': rows, 'errors': errors})
+    return rows, errors
+
+
+# ============================================================
+# Connector handlers (JWT-authorized /connector/* routes)
+# ------------------------------------------------------------
+# Flat, paginated responses for the Amazon Quick OpenAPI connector, which
+# cannot consume the nested arrays the legacy /pipelines route returns.
+# See cloudformation/dashboard-backend/CONNECTOR_ROUTE_CONTRACT.md.
+# ============================================================
+CONNECTOR_DEFAULT_PAGE_SIZE = 25
+CONNECTOR_MAX_PAGE_SIZE = 100
+CONNECTOR_VALID_STATUSES = ('Succeeded', 'InProgress', 'Failed', 'Stopped')
+
+
+def _qs(event, name, default=None):
+    return (event.get('queryStringParameters') or {}).get(name, default)
+
+
+def _parse_page_size(event):
+    raw = _qs(event, 'pageSize')
+    if raw is None or raw == '':
+        return CONNECTOR_DEFAULT_PAGE_SIZE
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError('invalid_page_size')
+    if n < 1 or n > CONNECTOR_MAX_PAGE_SIZE:
+        raise ValueError('invalid_page_size')
+    return n
+
+
+def _decode_offset(next_token):
+    if not next_token:
+        return 0
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(next_token.encode('utf-8')).decode('utf-8'))
+        offset = int(decoded.get('o', 0))
+        if offset < 0:
+            raise ValueError
+        return offset
+    except Exception:
+        raise ValueError('invalid_next_token')
+
+
+def _encode_offset(offset):
+    return base64.urlsafe_b64encode(json.dumps({'o': offset}).encode('utf-8')).decode('utf-8')
+
+
+def _paginate(items, offset, page_size):
+    page = items[offset:offset + page_size]
+    next_offset = offset + page_size
+    next_token = _encode_offset(next_offset) if next_offset < len(items) else ''
+    return page, next_token
+
+
+def _flat_summary(row):
+    """Project a full pipeline row down to a single-level summary object."""
+    return {
+        'accountId': row.get('accountId', ''),
+        'accountAlias': row.get('accountAlias', ''),
+        'region': row.get('region', ''),
+        'name': row.get('name', ''),
+        'repository': row.get('repository', '—'),
+        'branch': row.get('branch', 'main'),
+        'triggerType': row.get('triggerType', 'BranchMerge'),
+        'status': row.get('status', 'Stopped'),
+        'version': row.get('version', '—'),
+        'lastRunStart': int(row.get('lastRunStart') or 0),
+        'durationMs': int(row.get('durationMs') or 0),
+        'stageCount': len(row.get('stages') or []),
+        'logsUrl': row.get('logsUrl', ''),
+    }
+
+
+def handle_connector_stats(event):
+    # Identical payload to handle_stats; kept as its own entry point so the
+    # connector contract is explicit and can diverge later without touching
+    # the legacy route.
+    return handle_stats(event)
+
+
+def handle_connector_accounts(event):
+    try:
+        page_size = _parse_page_size(event)
+        offset = _decode_offset(_qs(event, 'nextToken'))
+    except ValueError as ve:
+        return response(400, {'error': str(ve)})
+
+    accounts = [{
+        'id': f'aws-{ACCOUNT_ID}',
+        'alias': 'aws',
+        'region': REGION,
+    }]
+    for a in _effective_tracked_accounts():
+        accounts.append({
+            'id': f"aws-{a['account_id']}",
+            'alias': a['alias'],
+            'region': a.get('region') or REGION,
+        })
+
+    page, next_token = _paginate(accounts, offset, page_size)
+    return response(200, {'items': page, 'nextToken': next_token})
+
+
+def handle_connector_pipelines(event):
+    try:
+        page_size = _parse_page_size(event)
+        offset = _decode_offset(_qs(event, 'nextToken'))
+    except ValueError as ve:
+        return response(400, {'error': str(ve)})
+
+    status_filter = _qs(event, 'status')
+    if status_filter is not None and status_filter != '' and status_filter not in CONNECTOR_VALID_STATUSES:
+        return response(400, {'error': 'invalid_status'})
+    account_filter = _qs(event, 'accountId')
+
+    rows, errors = _collect_all_pipeline_rows()
+
+    filtered = rows
+    if account_filter:
+        filtered = [r for r in filtered if r.get('accountId') == account_filter]
+    if status_filter:
+        filtered = [r for r in filtered if r.get('status') == status_filter]
+
+    summaries = [_flat_summary(r) for r in filtered]
+    page, next_token = _paginate(summaries, offset, page_size)
+    return response(200, {
+        'items': page,
+        'nextToken': next_token,
+        'errorCount': len(errors),
+    })
+
+
+def handle_connector_pipeline_detail(event):
+    params = event.get('pathParameters') or {}
+    account_id = params.get('accountId', '')
+    pipeline_name = params.get('pipelineName', '')
+    if not account_id or not pipeline_name:
+        return response(404, {'error': 'pipeline_not_found'})
+
+    rows, _ = _collect_all_pipeline_rows()
+    match = next(
+        (r for r in rows if r.get('accountId') == account_id and r.get('name') == pipeline_name),
+        None,
+    )
+    if not match:
+        return response(404, {'error': 'pipeline_not_found'})
+
+    detail = _flat_summary(match)
+    detail.pop('stageCount', None)
+    detail['stages'] = [
+        {'name': s.get('name', ''), 'status': s.get('status') or 'Stopped', 'url': s.get('url') or ''}
+        for s in (match.get('stages') or [])
+    ]
+    detail['history'] = [
+        {
+            'status': h.get('status') or 'Stopped',
+            'durationMs': int(h.get('durationMs') or 0),
+            'startTime': int(h.get('startTime') or 0),
+        }
+        for h in (match.get('history') or [])
+    ]
+    return response(200, detail)
 
 
 CHAT_SYSTEM_PROMPT = (
@@ -666,7 +838,22 @@ def handler(event, context):
     # via SigV4 + an attached execute-api:Invoke policy.
     try:
         route = get_route(event)
-        logger.info(f"Routing request: {method} {route}")
+        route_key = event.get('routeKey') or ''
+        logger.info(f"Routing request: {method} {route} (routeKey={route_key})")
+
+        # Connector routes (JWT-authorized). The pipeline-detail route carries
+        # path parameters, so match it on the raw routeKey template rather than
+        # the resolved path.
+        if route_key == 'GET /connector/pipelines/{accountId}/{pipelineName}':
+            return handle_connector_pipeline_detail(event)
+        if route == '/connector/stats':
+            return handle_connector_stats(event)
+        if route == '/connector/accounts':
+            return handle_connector_accounts(event)
+        if route == '/connector/pipelines':
+            return handle_connector_pipelines(event)
+
+        # Legacy AWS_IAM routes (local Vite/React UI).
         if route in ('/stats', '/'):
             return handle_stats(event)
         if route == '/accounts':
