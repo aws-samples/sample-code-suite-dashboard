@@ -89,9 +89,20 @@ Parameters:
     Default: 14
     Description: Retention (days) for Lambda CloudWatch log groups.
 
+  ConnectorAuthDomainPrefix:
+    Type: String
+    Default: ""
+    Description: >
+      Globally-unique Cognito hosted-UI domain prefix for the Amazon Quick
+      connector's OAuth2 token endpoint (e.g. "pipeline-dashboard-5471").
+      Must be unique across all AWS accounts in the region. Leave blank to
+      skip creating the connector OAuth stack entirely.
+    AllowedPattern: ^$|^[a-z0-9-]{3,63}$
+
 Conditions:
   OrgEnabledCondition: !Equals [!Ref OrgEnabled, "true"]
   HasHostingBucketCondition: !Not [!Equals [!Ref HostingBucket, ""]]
+  ConnectorAuthCondition: !Not [!Equals [!Ref ConnectorAuthDomainPrefix, ""]]
 
 Resources:
   # ============================================================
@@ -672,6 +683,59 @@ Resources:
           CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
 
   # ============================================================
+  # Cognito OAuth2 (machine-to-machine) for the Amazon Quick connector
+  # ------------------------------------------------------------
+  # The Quick OpenAPI connector authenticates with OAuth2 client credentials
+  # (SigV4 is unsupported by Quick connectors). These resources issue access
+  # tokens the HTTP API JWT authorizer validates for the /connector/* routes.
+  # Created only when ConnectorAuthDomainPrefix is set.
+  # ============================================================
+  ConnectorUserPool:
+    Type: AWS::Cognito::UserPool
+    Condition: ConnectorAuthCondition
+    Properties:
+      UserPoolName: !Sub "${ProjectName}-connector"
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+
+  ConnectorResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Condition: ConnectorAuthCondition
+    Properties:
+      UserPoolId: !Ref ConnectorUserPool
+      Identifier: pipeline-dashboard
+      Name: !Sub "${ProjectName}-connector-rs"
+      Scopes:
+        - ScopeName: read
+          ScopeDescription: Read-only access to pipeline dashboard connector routes.
+
+  ConnectorUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Condition: ConnectorAuthCondition
+    Properties:
+      UserPoolId: !Ref ConnectorUserPool
+      Domain: !Ref ConnectorAuthDomainPrefix
+
+  ConnectorAppClient:
+    Type: AWS::Cognito::UserPoolClient
+    Condition: ConnectorAuthCondition
+    # The resource server must exist before the client can reference its scope.
+    DependsOn: ConnectorResourceServer
+    Properties:
+      ClientName: !Sub "${ProjectName}-connector-client"
+      UserPoolId: !Ref ConnectorUserPool
+      GenerateSecret: true
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes:
+        - pipeline-dashboard/read
+      SupportedIdentityProviders:
+        - COGNITO
+      ExplicitAuthFlows:
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # ============================================================
   # HTTP API (AWS_IAM auth — same default as the Terraform module)
   # ============================================================
   StatsApi:
@@ -722,6 +786,73 @@ Resources:
       ApiId: !Ref StatsApi
       RouteKey: "GET /accounts"
       AuthorizationType: AWS_IAM
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  # ------------------------------------------------------------
+  # Connector routes (JWT / OAuth2 auth) for the Amazon Quick connector.
+  # Parallel to the AWS_IAM routes above; flat + paginated responses.
+  # Created only when ConnectorAuthDomainPrefix is set.
+  # ------------------------------------------------------------
+  ConnectorJwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Condition: ConnectorAuthCondition
+    Properties:
+      ApiId: !Ref StatsApi
+      AuthorizerType: JWT
+      Name: !Sub "${ProjectName}-connector-jwt"
+      IdentitySource:
+        - "$request.header.Authorization"
+      JwtConfiguration:
+        Audience:
+          - !Ref ConnectorAppClient
+        Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${ConnectorUserPool}"
+
+  ConnectorStatsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: ConnectorAuthCondition
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /connector/stats"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ConnectorJwtAuthorizer
+      AuthorizationScopes:
+        - pipeline-dashboard/read
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  ConnectorAccountsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: ConnectorAuthCondition
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /connector/accounts"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ConnectorJwtAuthorizer
+      AuthorizationScopes:
+        - pipeline-dashboard/read
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  ConnectorPipelinesRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: ConnectorAuthCondition
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /connector/pipelines"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ConnectorJwtAuthorizer
+      AuthorizationScopes:
+        - pipeline-dashboard/read
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  ConnectorPipelineDetailRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Condition: ConnectorAuthCondition
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /connector/pipelines/{accountId}/{pipelineName}"
+      AuthorizationType: JWT
+      AuthorizerId: !Ref ConnectorJwtAuthorizer
+      AuthorizationScopes:
+        - pipeline-dashboard/read
       Target: !Sub "integrations/${StatsApiIntegration}"
 
   ApiAccessLogGroup:
@@ -887,3 +1018,23 @@ Outputs:
   EnrichmentDLQUrl:
     Description: Dead-letter queue URL for failed enrichment events.
     Value: !Ref EnrichmentDLQ
+
+  ConnectorTokenUrl:
+    Condition: ConnectorAuthCondition
+    Description: OAuth2 token endpoint the Amazon Quick connector calls for a client-credentials access token.
+    Value: !Sub "https://${ConnectorAuthDomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
+
+  ConnectorClientId:
+    Condition: ConnectorAuthCondition
+    Description: Cognito app client ID for the connector (use as OAuth2 client_id).
+    Value: !Ref ConnectorAppClient
+
+  ConnectorScope:
+    Condition: ConnectorAuthCondition
+    Description: OAuth2 scope the connector must request.
+    Value: pipeline-dashboard/read
+
+  ConnectorBaseUrl:
+    Condition: ConnectorAuthCondition
+    Description: Base URL for the JWT-authorized connector routes.
+    Value: !Sub "https://${StatsApi}.execute-api.${AWS::Region}.amazonaws.com/connector"

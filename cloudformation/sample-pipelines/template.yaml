@@ -12,7 +12,11 @@ Parameters:
   AwsRegion:
     Type: String
     Default: us-east-1
-    Description: Region the pipelines run in. Must match the central dashboard backend.
+    Description: >
+      DEPRECATED / ignored. The stack now derives its region from the
+      deployment region (AWS::Region) for all ARNs, so this parameter no
+      longer affects anything. Kept only for backward compatibility with
+      existing deploy scripts that pass it.
 
   NamePrefix:
     Type: String
@@ -130,9 +134,9 @@ Resources:
                   - codebuild:StopBuild
                   - codebuild:BatchGetBuilds
                 Resource:
-                  - !Sub "arn:aws:codebuild:${AwsRegion}:${AWS::AccountId}:project/${NamePrefix}-python-api-build"
-                  - !Sub "arn:aws:codebuild:${AwsRegion}:${AWS::AccountId}:project/${NamePrefix}-node-api-build"
-                  - !Sub "arn:aws:codebuild:${AwsRegion}:${AWS::AccountId}:project/${NamePrefix}-static-site-build"
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${NamePrefix}-python-api-build"
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${NamePrefix}-node-api-build"
+                  - !Sub "arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${NamePrefix}-static-site-build"
 
   # ============================================================
   # Shared CodeBuild service role
@@ -159,7 +163,7 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-                Resource: !Sub "arn:aws:logs:${AwsRegion}:${AWS::AccountId}:log-group:/aws/codebuild/${NamePrefix}-*"
+                Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${NamePrefix}-*"
               - Sid: ArtifactBucket
                 Effect: Allow
                 Action:
