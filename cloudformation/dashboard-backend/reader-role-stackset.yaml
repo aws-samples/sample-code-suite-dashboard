@@ -1,0 +1,64 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Read-only IAM role assumed by the central pipeline-dashboard stats Lambda.
+  Deployed to every account in the organization via CloudFormation StackSets
+  so the dashboard can list pipelines + builds across the entire org.
+
+Parameters:
+  CentralLambdaRoleArn:
+    Type: String
+    Description: ARN of the central account's stats Lambda role. Trust policy is locked to this principal.
+  RoleName:
+    Type: String
+    Default: PipelineDashboardReader
+    Description: Name of the IAM role to create in each target account.
+
+Resources:
+  ReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Read-only role assumed by the central pipeline-dashboard stats Lambda.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CentralLambdaRoleArn
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PipelineDashboardRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ListPipelines has no resource-level support per AWS docs.
+              - Sid: CodePipelineList
+                Effect: Allow
+                Action:
+                  - codepipeline:ListPipelines
+                Resource: "*"
+              - Sid: CodePipelineRead
+                Effect: Allow
+                Action:
+                  - codepipeline:GetPipeline
+                  - codepipeline:GetPipelineState
+                  - codepipeline:ListPipelineExecutions
+                  - codepipeline:GetPipelineExecution
+                  - codepipeline:ListActionExecutions
+                Resource: !Sub "arn:aws:codepipeline:*:${AWS::AccountId}:*"
+              # ListBuilds has no resource-level support per AWS docs.
+              - Sid: CodeBuildList
+                Effect: Allow
+                Action:
+                  - codebuild:ListBuilds
+                Resource: "*"
+              - Sid: CodeBuildRead
+                Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                Resource: !Sub "arn:aws:codebuild:*:${AWS::AccountId}:project/*"
+
+Outputs:
+  RoleArn:
+    Value: !GetAtt ReaderRole.Arn
+    Description: ARN of the reader role created in this target account.

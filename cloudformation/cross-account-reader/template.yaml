@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cross-account reader role for the AWS Code Suite observability dashboard.
+  Deploy this stack into every AWS account whose CodePipeline + CodeBuild
+  activity should appear in the central dashboard. Read-only — see policy
+  statements below.
+
+  Mirrors terraform/cross-account-reader/.
+
+Parameters:
+  CentralLambdaRoleArn:
+    Type: String
+    Description: >
+      ARN of the central account's stats Lambda role. The created role's
+      trust policy is locked to this principal — only this Lambda can
+      assume into this account.
+    AllowedPattern: ^arn:aws:iam::[0-9]{12}:role/.+$
+    ConstraintDescription: Must be a valid IAM role ARN (arn:aws:iam::<acct>:role/<name>).
+
+  RoleName:
+    Type: String
+    Default: PipelineDashboardReader
+    Description: >
+      Name of the IAM role to create. Keep the default unless you've also
+      changed tracked_organization.role_name in the central stack.
+    AllowedPattern: ^[a-zA-Z0-9+=,.@_-]{1,64}$
+
+Resources:
+  ReaderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      Description: Read-only role assumed by the central pipeline-dashboard stats Lambda.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CentralLambdaRoleArn
+            Action: sts:AssumeRole
+      Tags:
+        - Key: Project
+          Value: aws-code-suite-observability
+      Policies:
+        - PolicyName: PipelineDashboardRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # ListPipelines has no resource-level support per AWS docs.
+              - Sid: CodePipelineList
+                Effect: Allow
+                Action:
+                  - codepipeline:ListPipelines
+                Resource: "*"
+              - Sid: CodePipelineRead
+                Effect: Allow
+                Action:
+                  - codepipeline:GetPipeline
+                  - codepipeline:GetPipelineState
+                  - codepipeline:ListPipelineExecutions
+                  - codepipeline:GetPipelineExecution
+                  - codepipeline:ListActionExecutions
+                Resource: !Sub "arn:aws:codepipeline:*:${AWS::AccountId}:*"
+              # ListBuilds has no resource-level support per AWS docs.
+              - Sid: CodeBuildList
+                Effect: Allow
+                Action:
+                  - codebuild:ListBuilds
+                Resource: "*"
+              - Sid: CodeBuildRead
+                Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                Resource: !Sub "arn:aws:codebuild:*:${AWS::AccountId}:project/*"
+
+Outputs:
+  RoleArn:
+    Description: >
+      Paste this ARN into the central stack's TrackedAccounts parameter (or
+      tracked_accounts variable in Terraform).
+    Value: !GetAtt ReaderRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-RoleArn"
+
+  TargetAccountId:
+    Description: 12-digit AWS account ID of this target account.
+    Value: !Ref AWS::AccountId
