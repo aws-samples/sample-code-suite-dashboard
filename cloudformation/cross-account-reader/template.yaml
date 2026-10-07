@@ -5,8 +5,6 @@ Description: >
   activity should appear in the central dashboard. Read-only — see policy
   statements below.
 
-  Mirrors terraform/cross-account-reader/.
-
 Parameters:
   CentralLambdaRoleArn:
     Type: String
@@ -22,7 +20,7 @@ Parameters:
     Default: PipelineDashboardReader
     Description: >
       Name of the IAM role to create. Keep the default unless you've also
-      changed tracked_organization.role_name in the central stack.
+      changed the OrgRoleName parameter in the central stack.
     AllowedPattern: ^[a-zA-Z0-9+=,.@_-]{1,64}$
 
 Resources:
@@ -76,8 +74,7 @@ Resources:
 Outputs:
   RoleArn:
     Description: >
-      Paste this ARN into the central stack's TrackedAccounts parameter (or
-      tracked_accounts variable in Terraform).
+      Paste this ARN into the central stack's TrackedAccounts parameter.
     Value: !GetAtt ReaderRole.Arn
     Export:
       Name: !Sub "${AWS::StackName}-RoleArn"

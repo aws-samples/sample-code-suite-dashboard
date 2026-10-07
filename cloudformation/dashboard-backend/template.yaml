@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   AWS Code Suite observability dashboard — central backend stack.
-  Mirrors terraform/dashboard-backend/. Deploys S3 data lake, Firehose
+  Deploys S3 data lake, Firehose
   delivery streams, EventBridge rules, Glue catalog, Athena workgroup,
   enrichment + stats Lambdas, the HTTP API (AWS_IAM auth), and
   CloudWatch alarms. Optional Organizations StackSet pushes the
@@ -34,7 +34,7 @@ Parameters:
     Type: String
     Default: "[]"
     Description: >
-      JSON-encoded list of tracked_accounts entries, e.g.:
+      JSON-encoded list of tracked-account entries, e.g.:
       '[{"account_id":"111111111111","alias":"prod","region":"us-east-1","role_arn":"arn:aws:iam::111111111111:role/PipelineDashboardReader"}]'
       Passed straight through to the stats Lambda as TRACKED_ACCOUNTS env var.
 
@@ -649,10 +649,10 @@ Resources:
             Action: sts:AssumeRole
             Resource: !Sub "arn:aws:iam::*:role/${OrgRoleName}"
             # Condition omitted because OrgId is only knowable at runtime.
-            # The Terraform stack adds aws:ResourceOrgID via a data source;
             # CFN can't query Organizations at template-eval time, so we
-            # accept a slightly broader scope here. To tighten, add the
-            # condition manually after deploy via an IAM role-policy update.
+            # accept a slightly broader scope here. To tighten, add an
+            # aws:ResourceOrgID condition manually after deploy via an IAM
+            # role-policy update.
 
   StatsLambda:
     Type: AWS::Lambda::Function
@@ -736,7 +736,7 @@ Resources:
         - ALLOW_REFRESH_TOKEN_AUTH
 
   # ============================================================
-  # HTTP API (AWS_IAM auth — same default as the Terraform module)
+  # HTTP API (AWS_IAM auth)
   # ============================================================
   StatsApi:
     Type: AWS::ApiGatewayV2::Api
