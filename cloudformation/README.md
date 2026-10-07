@@ -1,30 +1,23 @@
 # CloudFormation deployment
 
-CloudFormation mirror of the Terraform stacks under `../terraform/`. Pick this
-path if you can't use Terraform locally (e.g. enterprise environments that
-standardize on CFN/StackSets, or one-shot deploys from the AWS console).
+The infrastructure for the AWS Code Suite observability dashboard, as three
+self-contained CloudFormation stacks. Deploy them with the AWS CLI (directly
+or through the repo's Makefile) or one-shot from the AWS console.
 
-This folder is **self-contained** — it can be deployed (or deleted) without
-needing `../terraform/` present. The Lambda source code and sample app
-sources are duplicated here:
+The Lambda source code and sample app sources live alongside the templates:
 
 ```
 cloudformation/dashboard-backend/lambda/{enrichment,stats}/index.py
 cloudformation/sample-pipelines/sample-apps/{python-api,node-api,static-site}/
 ```
 
-> Terraform is treated as the canonical source for the shared application
-> code. After editing anything under `terraform/{dashboard-backend/lambda,
-> sample-pipelines/sample-apps}/`, run `make sync-cfn-from-tf` to mirror
-> the change into this folder before re-deploying the CFN stack.
-
 ## Layout
 
-| Folder | Terraform equivalent | What it deploys |
-|---|---|---|
-| `cross-account-reader/` | `terraform/cross-account-reader/` | Read-only IAM role in a target account. Deploy once per tracked account. |
-| `dashboard-backend/` | `terraform/dashboard-backend/` | Central stack: Lambdas, API Gateway, S3 data lake, Firehose, EventBridge, Glue, Athena, alarms, optional Organizations StackSet. |
-| `sample-pipelines/` | `terraform/sample-pipelines/` | Three demo CodePipelines (Python/Node/static) so the dashboard has data. |
+| Folder | What it deploys |
+|---|---|
+| `cross-account-reader/` | Read-only IAM role in a target account. Deploy once per tracked account. |
+| `dashboard-backend/` | Central stack: Lambdas, API Gateway, S3 data lake, Firehose, EventBridge, Glue, Athena, alarms, optional Organizations StackSet. |
+| `sample-pipelines/` | Three demo CodePipelines (Python/Node/static) so the dashboard has data. |
 
 ## Prerequisites
 
@@ -101,24 +94,22 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 
-**Note:** unlike the Terraform stack (`seed.tf`), this CFN stack does **not**
-auto-seed the CodeCommit repos with starter source. After deploy, run the
-seed helper:
+**Note:** this stack does **not** auto-seed the CodeCommit repos with starter
+source. After deploy, run the seed helper:
 
 ```bash
 make seed-cfn-samples
 ```
 
 This pushes `sample-apps/<dir>/` into each repo's `main` branch using your
-local AWS credentials, the same way `terraform/sample-pipelines/seed.tf` does
-via `local-exec`.
+local AWS credentials.
 
-## Differences from the Terraform stacks
+## Notes and limitations
 
-| Area | Terraform | CloudFormation | Why |
-|---|---|---|---|
-| Modules | 10 reusable modules under `terraform/modules/` | Inlined per stack | CFN has no first-class modules. Nested stacks add bootstrap overhead. |
-| `for_each` over `samples` map | Yes | Hard-coded 3 samples | CFN macros aren't ergonomic; the sample list is fixed. |
-| `seed.tf` (local-exec git push) | Runs on `terraform apply` | Manual step (`make seed-cfn-samples`) | CFN custom resources would need a deploy-time Lambda just to seed. Not worth it. |
-| Synthetic account generation | `synthetic_account_count` var | Skipped | Demo-only feature; not commonly used. Add back as a parameter if needed. |
-| Organizations StackSet | Always controlled by `tracked_organization.enabled` | Same — `OrgEnabled` parameter | Equivalent. |
+| Area | Behavior | Why |
+|---|---|---|
+| Modules | Resources inlined per stack | CFN has no first-class modules. Nested stacks add bootstrap overhead. |
+| Sample pipelines | Hard-coded 3 samples | The sample list is fixed; CFN macros aren't ergonomic. |
+| Seeding sample repos | Manual step (`make seed-cfn-samples`) | A CFN custom resource would need a deploy-time Lambda just to seed. Not worth it. |
+| Synthetic account generation | `SyntheticAccountCount` parameter (default 0) | Demo-only feature; set 0 in production. |
+| Organizations StackSet | Controlled by the `OrgEnabled` parameter | Pushes the reader role to every account in the org. |

@@ -14,19 +14,6 @@ build/
 .env.test.local
 .env.production.local
 
-# Terraform — never commit state or the local plugin cache.
-# NOTE: `.terraform.lock.hcl` SHOULD be committed (HashiCorp guidance) so every
-# operator + CI resolves identical provider versions. Don't add it back here.
-**/.terraform/
-**/terraform.tfstate
-**/terraform.tfstate.backup
-**/terraform.tfstate.*.backup
-**/*.tfvars
-**/*.tfvars.json
-**/crash.log
-**/crash.*.log
-~
-
 # Kiro IDE workspace (specs + steering) — local only
 .kiro/
 
@@ -41,15 +28,12 @@ cloudformation/**/.packaged*.yaml
 cloudformation/**/*.generated.json
 cloudformation/**/*.generated.md
 
-# Lambda build artifacts (produced by `make deploy-dashboard`)
-terraform/modules/lambda/.build/
-
 # Blog post draft (local-only)
 *.docx
 
 # Python — bytecode caches, virtualenvs, and test/tooling artifacts.
-# (Lambda handlers under cloudformation/**/lambda and terraform/**/lambda are
-# plain .py source; only their generated caches should be ignored.)
+# (Lambda handlers under cloudformation/**/lambda are plain .py source;
+# only their generated caches should be ignored.)
 __pycache__/
 *.py[cod]
 *.egg-info/

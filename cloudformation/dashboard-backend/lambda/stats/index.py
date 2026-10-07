@@ -112,8 +112,8 @@ def _list_organization_accounts():
 
 
 def _generate_synthetic_accounts():
-    """Mirror of the Terraform locals expansion. Generates a deterministic
-    list of {account_id, alias, region, synthetic} entries."""
+    """Generates a deterministic list of {account_id, alias, region,
+    synthetic} entries for UI volume when SyntheticAccountCount > 0."""
     out = []
     n_aliases = max(1, len(SYNTHETIC_ALIASES))
     n_regions = max(1, len(SYNTHETIC_REGIONS))

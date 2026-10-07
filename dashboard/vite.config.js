@@ -157,7 +157,7 @@ function awsSigV4Proxy(env) {
               hint:
                 'Check that your local AWS credentials are valid and that ' +
                 'execute-api:Invoke on the API ARN is granted (attach ' +
-                'api_invoke_policy_arn from terraform output).',
+                'the ApiInvokePolicyArn stack output).',
             })
           );
         }

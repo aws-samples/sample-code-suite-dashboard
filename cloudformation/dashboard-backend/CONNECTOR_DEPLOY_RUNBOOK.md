@@ -30,11 +30,6 @@ aws sts get-caller-identity --output table
 echo "Region: $CFN_REGION"
 ```
 
-> **Do NOT run `make sync-cfn-from-tf`.** These connector changes were made in
-> the CloudFormation copy only. `sync-cfn-from-tf` copies Terraform → CloudFormation
-> and would overwrite `cloudformation/.../lambda/stats/index.py`. (Mirroring the
-> change back into `terraform/` is a later follow-up.)
-
 ## 1. Packaging bucket (one-time)
 
 ```bash

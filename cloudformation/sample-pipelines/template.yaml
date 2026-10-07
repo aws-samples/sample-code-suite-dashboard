@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Three demo CodePipelines (Python API, Node API, static site) so the
-  dashboard has data. Mirrors terraform/sample-pipelines/.
+  dashboard has data.
 
   Note: this CFN stack does NOT auto-seed the CodeCommit repos. After
   deploy, run `make seed-cfn-samples` (or push manually) to populate
