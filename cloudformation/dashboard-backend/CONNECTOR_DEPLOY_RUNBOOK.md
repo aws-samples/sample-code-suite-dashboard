@@ -15,17 +15,21 @@ Quick app itself (Part 2) is built from `connector/QUICK_APP_PROMPT.generated.md
 - Amazon Quick enabled in that account (for the connector import at the end).
 - A packaging S3 bucket for Lambda zips (created in step 1).
 
+If you use a named profile, export `AWS_PROFILE=<your-profile>` first so every
+command picks it up. Set `CFN_REGION` to a Quick-supported region (e.g.
+`us-west-2`). `CONNECTOR_DOMAIN_PREFIX` must be a globally-unique Cognito domain
+prefix (lowercase, digits, hyphens).
+
 ```bash
-# If you use a named profile, export it so every command below picks it up:
-# export AWS_PROFILE=<your-profile>
-
-export CFN_REGION=<your-region>              # e.g. us-west-2 (a Quick-supported region)
+export CFN_REGION=<your-region>
 export CFN_STACK_NAME=pipeline-dashboard
-# Globally-unique Cognito domain prefix (lowercase/digits/hyphens), e.g.
-# pipeline-dashboard-<account-id>:
 export CONNECTOR_DOMAIN_PREFIX=pipeline-dashboard-$(aws sts get-caller-identity --query Account --output text)
+```
 
-# Confirm which account/region you're about to deploy into BEFORE anything mutating:
+Confirm which account and region you are about to deploy into before running
+anything mutating:
+
+```bash
 aws sts get-caller-identity --output table
 echo "Region: $CFN_REGION"
 ```
@@ -101,25 +105,25 @@ BASE_URL=$(aws cloudformation describe-stacks --stack-name "$CFN_STACK_NAME" --r
   --query 'Stacks[0].Outputs[?OutputKey==`ConnectorBaseUrl`].OutputValue' --output text)
 CLIENT_SECRET=<paste from step 5>
 
-# a) get an access token (client credentials)
 ACCESS_TOKEN=$(curl -s -X POST "$TOKEN_URL" \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   -u "${CLIENT_ID}:${CLIENT_SECRET}" \
   -d 'grant_type=client_credentials&scope=pipeline-dashboard/read' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
 
-# b) call each connector route
 curl -s -H "Authorization: Bearer $ACCESS_TOKEN" "$BASE_URL/stats"     | python3 -m json.tool
 curl -s -H "Authorization: Bearer $ACCESS_TOKEN" "$BASE_URL/accounts"  | python3 -m json.tool
 curl -s -H "Authorization: Bearer $ACCESS_TOKEN" "$BASE_URL/pipelines?pageSize=5" | python3 -m json.tool
 
-# c) confirm auth is actually enforced — this MUST return 401
 curl -s -o /dev/null -w '%{http_code}\n' "$BASE_URL/stats"
 ```
 
-Expected: (b) returns JSON bodies matching the route contract; (c) prints `401`.
-If you deployed the optional sample pipelines you'll see rows; otherwise
-`/pipelines` returns an empty `items` list, which is still a valid pass.
+This gets an access token with the client credentials grant, calls each
+connector route with it, then calls `/stats` with no token to confirm auth is
+enforced. Expected: the authorized calls return JSON bodies matching the route
+contract, and the final unauthenticated call **must** print `401`. If you
+deployed the optional sample pipelines you'll see rows; otherwise `/pipelines`
+returns an empty `items` list, which is still a valid pass.
 
 ## 7. Render the connector artifacts
 
@@ -127,9 +131,10 @@ Instead of hand-editing `openapi.json`, run the render script — it reads the
 stack outputs and writes an import-ready spec plus the Quick app build prompt,
 both with your live values filled in:
 
+Add `--region`/`--profile` only if they differ from your configured defaults:
+
 ```bash
 python3 scripts/render_quick_app.py --stack-name "$CFN_STACK_NAME"
-# (add --region/--profile only if they differ from your configured defaults)
 ```
 
 This produces (gitignored, account-specific):

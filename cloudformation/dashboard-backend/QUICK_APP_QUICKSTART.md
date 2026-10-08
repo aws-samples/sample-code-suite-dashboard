@@ -24,17 +24,19 @@ The solution has **two parts**:
 
 ## Part 1 - Deploy the backend (CloudFormation)
 
+Set your environment and create a one-time packaging bucket:
+
 ```bash
 export CFN_REGION=<your-region>
 export CFN_STACK_NAME=pipeline-dashboard
 export CONNECTOR_DOMAIN_PREFIX=pipeline-dashboard-$(aws sts get-caller-identity --query Account --output text)
-
-# 1. Packaging bucket (one-time)
 export CFN_PKG_BUCKET=aws-code-observability-cfn-artifacts-$(aws sts get-caller-identity --query Account --output text)-${CFN_REGION}
 aws s3 mb "s3://$CFN_PKG_BUCKET" --region "$CFN_REGION"
+```
 
-# 2. Package + deploy the backend WITH the connector turned on.
-#    Prefer the Makefile target (run from the repo root):
+Package and deploy the backend with the connector enabled, from the repo root:
+
+```bash
 make deploy-cfn-connector \
   CFN_PKG_BUCKET="$CFN_PKG_BUCKET" \
   CFN_REGION="$CFN_REGION" \
@@ -56,16 +58,21 @@ aws cloudformation deploy \
 ```
 </details>
 
-**(Optional) sample pipelines** so the dashboard has data to show:
+**(Optional) sample pipelines** so the dashboard has data to show. The seed step
+runs from the repo root and needs git-remote-codecommit:
 
 ```bash
 aws cloudformation deploy \
   --stack-name "${CFN_STACK_NAME}-samples" \
   --template-file ../sample-pipelines/template.yaml \
   --capabilities CAPABILITY_NAMED_IAM --region "$CFN_REGION"
-make seed-cfn-samples CFN_REGION="$CFN_REGION"     # run from repo root; needs git-remote-codecommit
-# The sample pipelines auto-run once on create against empty repos (Source
-# fails). After seeding, kick a fresh run so they go green:
+make seed-cfn-samples CFN_REGION="$CFN_REGION"
+```
+
+The sample pipelines auto-run once on create against empty repos, so that first
+Source stage fails. After seeding, kick a fresh run so they go green:
+
+```bash
 for p in sample-node-api-pipeline sample-python-api-pipeline sample-static-site-pipeline; do
   aws codepipeline start-pipeline-execution --name "$p" --region "$CFN_REGION"
 done
@@ -81,8 +88,10 @@ done
 
 ```bash
 make render-quick-app CFN_REGION="$CFN_REGION"
-# raw equivalent: python3 scripts/render_quick_app.py --stack-name "$CFN_STACK_NAME" --region "$CFN_REGION"
 ```
+
+The raw equivalent is
+`python3 scripts/render_quick_app.py --stack-name "$CFN_STACK_NAME" --region "$CFN_REGION"`.
 
 Writes (gitignored, account-specific):
 - `connector/openapi.generated.json` - import into Quick.
@@ -168,10 +177,13 @@ connector-backed app).
 2. Connectors -> your OpenAPI connector -> **Delete**.
 
 **AWS backend (scripted):**
+The first form is a dry run that shows what would be deleted; the second empties
+the buckets and deletes both stacks. The raw equivalent is
+`scripts/destroy_backend.sh [--yes]`.
+
 ```bash
-make destroy-cfn-connector CFN_REGION="$CFN_REGION"            # dry run - shows what would be deleted
-make destroy-cfn-connector CFN_REGION="$CFN_REGION" CONFIRM=yes # actually delete (empties buckets, deletes both stacks)
-# raw equivalent: scripts/destroy_backend.sh [--yes]
+make destroy-cfn-connector CFN_REGION="$CFN_REGION"
+make destroy-cfn-connector CFN_REGION="$CFN_REGION" CONFIRM=yes
 ```
 
 See `CONNECTOR_TEARDOWN.md` for details and the manual CLI equivalent.
