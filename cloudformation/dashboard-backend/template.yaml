@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  AWS Code Suite observability dashboard — central backend stack.
+  AWS Code Suite Dashboard — central backend stack.
   Deploys S3 data lake, Firehose
   delivery streams, EventBridge rules, Glue catalog, Athena workgroup,
   enrichment + stats Lambdas, the HTTP API (AWS_IAM auth), and
@@ -94,7 +94,7 @@ Parameters:
     Default: ""
     Description: >
       Globally-unique Cognito hosted-UI domain prefix for the Amazon Quick
-      connector's OAuth2 token endpoint (e.g. "pipeline-dashboard-5471").
+      connector's OAuth2 token endpoint (e.g. "pipeline-dashboard-<account-id>").
       Must be unique across all AWS accounts in the region. Leave blank to
       skip creating the connector OAuth stack entirely.
     AllowedPattern: ^$|^[a-z0-9-]{3,63}$
