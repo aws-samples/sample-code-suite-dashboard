@@ -74,13 +74,11 @@ with Diagram(
         tracked = Codepipeline("CodePipeline /\nCodeBuild")
         reader >> Edge(style="dashed") >> tracked
 
-    # Read path
     ui >> Edge(color="darkblue", label="SigV4 /api/*") >> api
     api >> Edge(color="darkblue", label="invoke") >> stats
     stats >> Edge(color="darkblue") >> athena >> Edge(color="darkblue") >> glue
     stats >> Edge(color="darkblue", style="dashed", label="sts:AssumeRole") >> reader
 
-    # Ingestion path: producers emit -> EventBridge fans out to TWO consumers
     src >> Edge(color="darkgreen", label="state-change events") >> eb
     eb >> Edge(color="darkgreen", label="*-events-rule") >> fh >> Edge(color="darkgreen") >> s3
     eb >> Edge(color="darkgreen", label="*-enrichment-rule") >> enrich
@@ -88,7 +86,6 @@ with Diagram(
     enrich >> Edge(color="firebrick", style="dashed", label="on failure") >> dlq
     s3 >> Edge(color="darkgreen") >> glue
 
-    # Chat path
     stats >> Edge(color="purple", label="write / poll") >> ddb
     stats >> Edge(color="purple", label="async invoke") >> worker
     worker >> Edge(color="purple", label="CreateChat /\nSendMessage") >> agent

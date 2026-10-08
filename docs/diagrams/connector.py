@@ -100,12 +100,10 @@ with Diagram(
     # Frontend 2: local React UI via the existing AWS_IAM routes (unchanged)
     ui >> Edge(color="darkorange", label="SigV4 /api/* (AWS_IAM)") >> api
 
-    # Read path
     stats >> Edge(color="darkblue", label="query") >> athena >> Edge(color="darkblue") >> glue
     glue >> Edge(color="darkblue") >> s3
     stats >> Edge(color="darkblue", style="dashed", label="sts:AssumeRole") >> reader
 
-    # Chat path
     stats >> Edge(color="purple", label="write / poll") >> ddb
     stats >> Edge(color="purple", label="async invoke") >> worker
     worker >> Edge(color="purple", label="CreateChat /\nSendMessage") >> agent
