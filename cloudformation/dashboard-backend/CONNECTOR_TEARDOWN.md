@@ -48,26 +48,26 @@ non-empty buckets) and requires explicit confirmation:
 The script uses your configured AWS credentials (AWS_PROFILE / env / default
 profile) and region.
 
-```bash
-# dry run — shows what would be deleted, changes nothing
-scripts/destroy_backend.sh
+The first form is a dry run that changes nothing; the second actually destroys:
 
-# actually destroy (requires --yes)
+```bash
+scripts/destroy_backend.sh
 scripts/destroy_backend.sh --yes
 ```
 
 ### Manual equivalent (if you prefer raw CLI)
 
-```bash
-# Assumes your AWS CLI is already configured (AWS_PROFILE / env / default).
-REGION=us-west-2   # or your deploy region
+Assumes your AWS CLI is already configured. Delete the samples stack first — it
+owns CodeCommit repos and its own artifacts bucket — then the backend. Buckets
+must be emptied before their stack will delete.
 
-# samples first (has CodeCommit repos + its own artifacts bucket)
+```bash
+REGION=us-west-2
+
 aws s3 rm "s3://sample-pipelines-artifacts-$(aws sts get-caller-identity --query Account --output text)" --recursive
 aws cloudformation delete-stack --stack-name pipeline-dashboard-samples --region "$REGION"
 aws cloudformation wait stack-delete-complete --stack-name pipeline-dashboard-samples --region "$REGION"
 
-# backend
 aws s3 rm "s3://pipeline-dashboard-data-$(aws sts get-caller-identity --query Account --output text)" --recursive
 aws cloudformation delete-stack --stack-name pipeline-dashboard --region "$REGION"
 aws cloudformation wait stack-delete-complete --stack-name pipeline-dashboard --region "$REGION"
