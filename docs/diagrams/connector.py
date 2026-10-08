@@ -1,7 +1,7 @@
 """Dual-frontend architecture: app in Amazon Quick AND the local React UI.
 
-Run: python3 docs/diagrams/connector_architecture_diagram.py
-Output: docs/diagrams/connector_architecture_diagram.png
+Run: python3 docs/diagrams/connector.py
+Output: docs/diagrams/connector.png
 
 Two frontends share one backend. The app in Amazon Quick reaches it through an
 OpenAPI action connector (OAuth 2.0 client credentials -> JWT-authorized
@@ -39,7 +39,7 @@ EDGE = {"penwidth": "2.5", "fontsize": "14"}
 
 with Diagram(
     "Dual frontend: app in Amazon Quick + local React UI",
-    filename="docs/diagrams/connector_architecture_diagram",
+    filename="docs/diagrams/connector",
     show=False,
     direction="LR",
     graph_attr=GRAPH,

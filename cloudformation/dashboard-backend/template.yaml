@@ -94,7 +94,7 @@ Parameters:
     Default: ""
     Description: >
       Globally-unique Cognito hosted-UI domain prefix for the Amazon Quick
-      connector's OAuth2 token endpoint (e.g. "pipeline-dashboard-5471").
+      connector's OAuth2 token endpoint (e.g. "pipeline-dashboard-<account-id>").
       Must be unique across all AWS accounts in the region. Leave blank to
       skip creating the connector OAuth stack entirely.
     AllowedPattern: ^$|^[a-z0-9-]{3,63}$

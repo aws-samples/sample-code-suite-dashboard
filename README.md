@@ -25,7 +25,11 @@ optional sample pipelines) driven through the Makefile.
 
 ## Architecture
 
-![Architecture of the AWS Code Suite observability dashboard: CodePipeline and CodeBuild events flow through EventBridge to Firehose and an enrichment Lambda into an S3 data lake cataloged by Glue and queried by Athena; a stats Lambda serves an IAM-authorized HTTP API consumed by the local React dashboard, with cross-account reader roles and a DevOps Agent chat path.](docs/diagrams/architecture_diagram.png)
+![High-level overview of the AWS Code Suite observability system: pipeline and build events from member accounts flow into ingestion, where a historical-forensics path (Firehose to an S3 data lake cataloged by Glue and queried by Athena) and a real-time path (an enrichment Lambda writing an enriched prefix) feed a stats Lambda behind an HTTP API, served to an app in Amazon Quick as the primary frontend and an optional React dashboard.](docs/diagrams/overview.png)
+
+A more detailed view of the deployed CloudFormation stack:
+
+![Architecture of the AWS Code Suite observability dashboard: CodePipeline and CodeBuild events flow through EventBridge to Firehose and an enrichment Lambda into an S3 data lake cataloged by Glue and queried by Athena; a stats Lambda serves an IAM-authorized HTTP API consumed by the local React dashboard, with cross-account reader roles and a DevOps Agent chat path.](docs/diagrams/architecture.png)
 
 Diagrams are generated with the [`diagrams`](https://diagrams.mingrammer.com/)
 library; see [`docs/diagrams/`](docs/diagrams/) for the source scripts and how to
@@ -67,7 +71,7 @@ Vite + SigV4 proxy (the Quick sandbox cannot sign SigV4 requests). This path
 adds a Cognito-backed JWT authorizer and a set of flat, paginated
 `/connector/*` routes alongside the existing IAM routes.
 
-![Connector-only architecture: an app in Amazon Quick calls an OpenAPI action connector authenticated with OAuth2 client credentials, which reaches a JWT-authorized HTTP API and the stats Lambda over the same data lake and ingestion backend, with no QuickSight dataset.](docs/diagrams/connector_architecture_diagram.png)
+![Connector-only architecture: an app in Amazon Quick calls an OpenAPI action connector authenticated with OAuth2 client credentials, which reaches a JWT-authorized HTTP API and the stats Lambda over the same data lake and ingestion backend, with no QuickSight dataset.](docs/diagrams/connector.png)
 
 See [`cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md`](cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md)
 for the end-to-end deploy-and-build walkthrough.

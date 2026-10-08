@@ -28,9 +28,6 @@ cloudformation/**/.packaged*.yaml
 cloudformation/**/*.generated.json
 cloudformation/**/*.generated.md
 
-# Blog post draft (local-only)
-*.docx
-
 # Python — bytecode caches, virtualenvs, and test/tooling artifacts.
 # (Lambda handlers under cloudformation/**/lambda are plain .py source;
 # only their generated caches should be ignored.)
@@ -42,3 +39,7 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Scratch / working directories — any temp/ anywhere in the repo
+temp/
+**/temp/

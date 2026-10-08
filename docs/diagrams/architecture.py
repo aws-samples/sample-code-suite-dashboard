@@ -1,7 +1,7 @@
 """Generate the architecture diagram for aws-code-observability-dashboard.
 
-Run: python3 docs/diagrams/architecture_diagram.py
-Output: docs/diagrams/architecture_diagram.png
+Run: python3 docs/diagrams/architecture.py
+Output: docs/diagrams/architecture.png
 """
 
 from diagrams import Diagram, Cluster, Edge
@@ -31,7 +31,7 @@ edge_attr = {"penwidth": "2.5", "fontsize": "14"}
 
 with Diagram(
     "aws-code-observability-dashboard (CloudFormation stack)",
-    filename="docs/diagrams/architecture_diagram",
+    filename="docs/diagrams/architecture",
     show=False,
     direction="LR",
     graph_attr=graph_attr,
