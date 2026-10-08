@@ -1,18 +1,11 @@
-# aws-code-observability-dashboard
+# AWS Code Suite Dashboard
 
-> [!WARNING]
-> **This is sample code, not production-ready software.** It is provided as-is
-> for demonstration and learning purposes. Before using any of it in a
-> production environment you should review and harden the security posture
-> (IAM scoping, encryption keys, logging, network isolation), add automated
-> tests, plan for scale and cost, and validate that it meets your
-> organization's operational and compliance requirements. No warranty is
-> made regarding fitness for a particular purpose. See [LICENSE](LICENSE).
+_Cross-account visibility for AWS CodePipeline and CodeBuild, with an AWS DevOps Agent chat assistant._
 
-A cross-account observability dashboard for AWS CodePipeline + CodeBuild.
-Captures every pipeline execution and build event into a central data lake,
-enriches it with per-stage detail, exposes it through an IAM-authorized HTTP
-API, and renders it locally with a React UI.
+It captures every pipeline execution and build event into a central data lake,
+enriches it with per-stage detail, exposes it through an HTTP API, and renders
+it as an **app in Amazon Quick**. A local React dashboard is included as an
+optional developer view over the same API.
 
 The dashboard also embeds an **AWS DevOps Agent** chat, so users can ask
 natural-language questions about a specific pipeline ("why is this
@@ -25,52 +18,48 @@ optional sample pipelines) driven through the Makefile.
 
 ## Architecture
 
-![Architecture of the AWS Code Suite observability dashboard: CodePipeline and CodeBuild events flow through EventBridge to Firehose and an enrichment Lambda into an S3 data lake cataloged by Glue and queried by Athena; a stats Lambda serves an IAM-authorized HTTP API consumed by the local React dashboard, with cross-account reader roles and a DevOps Agent chat path.](docs/diagrams/architecture_diagram.png)
+At a high level, pipeline and build events are captured, archived and enriched
+in an S3 data lake, then served to a dashboard through an HTTP API:
+
+![CodePipeline and CodeBuild events flow through EventBridge into an S3 data lake queried by Athena, then through an HTTP API to an app in Amazon Quick.](docs/diagrams/overview.png)
+
+A few design points worth calling out:
+
+- **The same events fan out to two independent paths.** A cheap Firehose-to-S3
+  archive keeps the full raw history for forensics, while an enrichment Lambda
+  produces query-friendly rows for the live dashboard.
+- **Multi-account aggregation uses AWS Organizations.** A CloudFormation
+  StackSet deploys a read-only reader role into every member account; the stats
+  Lambda assumes it to aggregate pipelines across the organization.
+- **One API serves two frontends.** The app in Amazon Quick calls it through a
+  JWT-authorized connector; the optional local React dashboard calls the same
+  API with SigV4.
 
 Diagrams are generated with the [`diagrams`](https://diagrams.mingrammer.com/)
-library; see [`docs/diagrams/`](docs/diagrams/) for the source scripts and how to
-regenerate them. The text version below is kept as a quick reference.
+library. See [`docs/diagrams/`](docs/diagrams/) for a per-concept diagram of
+each point above (data paths, multi-account, serving), the detailed deployed
+stack, and how to regenerate them.
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│ Central account                                                          │
-│                                                                          │
-│   CodePipeline / CodeBuild events                                        │
-│        │                                                                 │
-│        ▼                                                                 │
-│   EventBridge ──► Firehose ──► S3 data lake ──► Glue + Athena            │
-│        │                                                                 │
-│        └────────► Enrichment Lambda ──► enriched/ prefix in data lake    │
-│                                                                          │
-│   Stats Lambda ◄── HTTP API (AWS_IAM auth) ◄── Vite dev server (SigV4)   │
-│        │                                                                 │
-│        └── sts:AssumeRole ──► PipelineDashboardReader role               │
-│                                  in each tracked account                 │
-│                                                                          │
-│   Chat feature:                                                          │
-│     POST /chat  ─►  DynamoDB (chat state)                                │
-│                  ─►  Chat Worker Lambda ─► AWS DevOps Agent AgentSpace   │
-│     GET  /chat/{chatId}  ─►  DynamoDB (poll for answer)                  │
-└──────────────────────────────────────────────────────────────────────────┘
-```
+### Primary frontend: an app in Amazon Quick
 
-The dashboard UI runs locally on `http://localhost:5173`. The Vite dev server
-proxies `/api/*` to the HTTP API and signs every request with SigV4 using the
-developer's local AWS credentials — the browser never sees AWS credentials and
-the API never accepts unsigned requests.
+The dashboard is built as an **app in Amazon Quick**, reached through an
+OAuth2-authorized OpenAPI **connector**. The connector adds a Cognito-backed
+JWT authorizer and a set of flat, paginated `/connector/*` routes alongside the
+backend's IAM routes.
 
-### Alternative frontend: an app in Amazon Quick
-
-The same backend can also drive a dashboard built as an **app in Amazon Quick**,
-reached through an OAuth2-authorized OpenAPI **connector** instead of the local
-Vite + SigV4 proxy (the Quick sandbox cannot sign SigV4 requests). This path
-adds a Cognito-backed JWT authorizer and a set of flat, paginated
-`/connector/*` routes alongside the existing IAM routes.
-
-![Connector-only architecture: an app in Amazon Quick calls an OpenAPI action connector authenticated with OAuth2 client credentials, which reaches a JWT-authorized HTTP API and the stats Lambda over the same data lake and ingestion backend, with no QuickSight dataset.](docs/diagrams/connector_architecture_diagram.png)
+![Connector architecture: an app in Amazon Quick calls an OpenAPI action connector authenticated with OAuth2 client credentials, which reaches a JWT-authorized HTTP API and the stats Lambda over the same data lake and ingestion backend.](docs/diagrams/connector.png)
 
 See [`cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md`](cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md)
 for the end-to-end deploy-and-build walkthrough.
+
+### Optional frontend: the local React dashboard
+
+For local development the same backend drives a React UI on
+`http://localhost:5173`. The Vite dev server proxies `/api/*` to the HTTP API
+and signs every request with SigV4 using the developer's local AWS credentials
+(the Quick sandbox cannot sign SigV4, which is why the app uses the connector
+instead) — the browser never sees AWS credentials and the API never accepts
+unsigned requests.
 
 ## Repo layout
 
@@ -120,36 +109,43 @@ for the end-to-end deploy-and-build walkthrough.
 
 ## Quick start
 
+Create a one-time packaging bucket for the Lambda zips, then deploy the central
+backend:
+
 ```bash
-# 0. One-time: create a packaging bucket for Lambda zips
 export CFN_PKG_BUCKET=cfn-pkg-$(aws sts get-caller-identity --query Account --output text)-us-east-1
 aws s3 mb "s3://$CFN_PKG_BUCKET"
-
-# 1. Deploy the central backend
 make deploy-cfn-dashboard
+```
 
-# 2. (Optional) Deploy + seed the demo pipelines so the dashboard has data.
-#    Skip this if you already have real CodePipeline/CodeBuild activity, or
-#    plan to onboard tracked accounts and use their pipelines instead.
+Optionally deploy and seed demo pipelines so the dashboard has data. Skip this
+if you already have real CodePipeline/CodeBuild activity, or plan to onboard
+tracked accounts and use their pipelines instead:
+
+```bash
 make deploy-cfn-sample-pipelines
 make seed-cfn-samples
+```
 
-# 3. Attach the API invoke policy (output from step 1)
+Attach the API invoke policy (the `ApiInvokePolicyArn` output from the backend
+deploy) to the principal that will call the API:
+
+```bash
 aws iam attach-user-policy \
   --user-name $(aws sts get-caller-identity --query Arn --output text | awk -F/ '{print $NF}') \
   --policy-arn $(aws cloudformation describe-stacks \
     --stack-name pipeline-dashboard \
     --query 'Stacks[0].Outputs[?OutputKey==`ApiInvokePolicyArn`].OutputValue' \
     --output text)
-
-# 4. Run the dashboard locally
-make run-dashboard
 ```
 
 See `cloudformation/README.md` for per-stack deploy details and the
 parameters each stack accepts.
 
-## Running the dashboard
+## Running the local React dashboard
+
+This is the optional developer view. To build the primary Amazon Quick app, see
+[`cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md`](cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md).
 
 ```bash
 make install-dashboard   # first time only — npm install
@@ -166,11 +162,11 @@ secrets ever live in the browser.
 
 To observe pipelines across other AWS accounts:
 
-```bash
-# Per-account onboarding
-make track-account PROFILE=<other-aws-profile> ALIAS=<short-label>
+Onboard a single account, or auto-discover every account in your AWS
+Organization:
 
-# Or auto-discover everything in your AWS Organization
+```bash
+make track-account PROFILE=<other-aws-profile> ALIAS=<short-label>
 make enable-org-tracking ROOT_ID=r-xxxx
 ```
 
@@ -289,13 +285,13 @@ production account.
 
 ## Common operations
 
-```bash
-make help                       # full list of targets
-make plan-cfn-dashboard         # cfn change set, no apply
-make deploy-cfn-dashboard       # deploy the central backend stack
-make destroy-cfn-dashboard      # tear it all down
-make list-tracked-accounts      # GET /accounts via SigV4 + jq
-```
+| Command | What it does |
+|---|---|
+| `make help` | List all targets. |
+| `make plan-cfn-dashboard` | Create a CloudFormation change set without applying it. |
+| `make deploy-cfn-dashboard` | Deploy the central backend stack. |
+| `make destroy-cfn-dashboard` | Tear the stack down. |
+| `make list-tracked-accounts` | Call `GET /accounts` via SigV4 and format with jq. |
 
 ## Conventions
 

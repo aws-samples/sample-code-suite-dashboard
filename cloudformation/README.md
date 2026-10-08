@@ -1,6 +1,6 @@
 # CloudFormation deployment
 
-The infrastructure for the AWS Code Suite observability dashboard, as three
+The infrastructure for the AWS Code Suite Dashboard, as three
 self-contained CloudFormation stacks. Deploy them with the AWS CLI (directly
 or through the repo's Makefile) or one-shot from the AWS console.
 

@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "AWS Code Suite Observability Connector",
-    "description": "Read-only connector for the AWS Code Suite observability dashboard. Exposes pipeline statistics, tracked accounts, a paginated pipeline list, and per-pipeline detail for use by an app in Amazon Quick.",
+    "title": "AWS Code Suite Dashboard Connector",
+    "description": "Read-only connector for the AWS Code Suite Dashboard. Exposes pipeline statistics, tracked accounts, a paginated pipeline list, and per-pipeline detail for use by an app in Amazon Quick.",
     "version": "1.0.0"
   },
   "servers": [
