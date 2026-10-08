@@ -11,7 +11,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 athena = boto3.client('athena')
-codepipeline = boto3.client('codepipeline')  # local-account client (default)
+codepipeline = boto3.client('codepipeline')
 s3 = boto3.client('s3')
 sts = boto3.client('sts')
 organizations = boto3.client('organizations')
@@ -88,7 +88,7 @@ def _list_organization_accounts():
                     continue
                 aid = acct['Id']
                 if aid == ACCOUNT_ID:
-                    continue  # skip the central account
+                    continue
                 if aid in ORG_EXCLUDE_ACCOUNTS:
                     continue
                 # Friendly alias = account name with whitespace squashed,
@@ -181,9 +181,7 @@ def get_deployed_version():
         return '—'
 
 
-# ============================================================
-# Multi-account: assume cross-account roles + synthesize demo rows
-# ============================================================
+# Multi-account: assume cross-account roles + synthesize demo rows.
 def _build_codepipeline_client(account):
     """Return a codepipeline boto3 client scoped to the target account/region.
     For the local account (no role_arn) returns the default client. For
@@ -193,7 +191,6 @@ def _build_codepipeline_client(account):
     region = account.get('region') or REGION
     role_arn = account.get('role_arn')
     if not role_arn:
-        # Local-account or same-account-different-region client.
         return boto3.client('codepipeline', region_name=region)
     resp = sts.assume_role(
         RoleArn=role_arn,
@@ -228,15 +225,14 @@ def _synthesize_pipelines_for(account, base_rows, limit=3):
         clone['accountId']    = f"aws-{account['account_id']}"
         clone['accountAlias'] = account['alias']
         clone['region']       = account.get('region') or REGION
-        # Perturb the headline status so the UI shows variety.
+        # Deterministically perturb status, timing, and duration off the seed so
+        # each synthetic account shows different-looking data in the demo UI.
         clone['status'] = statuses[(seed + i) % len(statuses)]
-        # Bump the last-run timestamp by a deterministic offset.
         if clone.get('lastRunStart'):
             clone['lastRunStart'] = int(clone['lastRunStart']) - ((seed + i) % 7) * 60_000
-        # Adjust duration so the sparkline differs.
         clone['durationMs'] = int(clone.get('durationMs', 60_000)) + ((seed + i) % 5) * 10_000
-        # Rebuild logsUrl to point at the synthetic account's region (the URL
-        # won't actually resolve cross-account, but it makes the UI honest).
+        # Point logsUrl at the synthetic region. It won't resolve cross-account,
+        # but it keeps the UI honest about which region the row claims to be in.
         if clone.get('logsUrl'):
             clone['logsUrl'] = clone['logsUrl'].replace(f'region={REGION}', f"region={clone['region']}")
         out.append(clone)
@@ -360,7 +356,6 @@ def synthesize_source_url(pipeline_name, pipeline_def, stage_state):
     externalExecutionUrl (common for CodeCommit). Returns None if the stage is
     not a Source stage we know how to link to."""
     try:
-        # Find the matching stage in the pipeline definition to read its config
         stage_name = stage_state.get('stageName')
         cfg_stages = pipeline_def.get('pipeline', {}).get('stages', [])
         cfg_stage = next((s for s in cfg_stages if s.get('name') == stage_name), None)
@@ -372,7 +367,6 @@ def synthesize_source_url(pipeline_name, pipeline_def, stage_state):
         cfg = action_cfg_stage.get('configuration', {}) or {}
         provider = action_cfg_stage.get('actionTypeId', {}).get('provider', '')
 
-        # Latest commit SHA for this stage's last execution
         rev = action_state.get('currentRevision', {}) or {}
         commit = rev.get('revisionId', '')
 
@@ -588,13 +582,10 @@ def _collect_all_pipeline_rows():
     return rows, errors
 
 
-# ============================================================
-# Connector handlers (JWT-authorized /connector/* routes)
-# ------------------------------------------------------------
-# Flat, paginated responses for the Amazon Quick OpenAPI connector, which
-# cannot consume the nested arrays the legacy /pipelines route returns.
+# Connector handlers (JWT-authorized /connector/* routes): flat, paginated
+# responses for the Amazon Quick OpenAPI connector, which cannot consume the
+# nested arrays the legacy /pipelines route returns.
 # See cloudformation/dashboard-backend/CONNECTOR_ROUTE_CONTRACT.md.
-# ============================================================
 CONNECTOR_DEFAULT_PAGE_SIZE = 25
 CONNECTOR_MAX_PAGE_SIZE = 100
 CONNECTOR_VALID_STATUSES = ('Succeeded', 'InProgress', 'Failed', 'Stopped')

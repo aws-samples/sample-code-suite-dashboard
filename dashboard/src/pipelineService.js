@@ -101,7 +101,7 @@ export async function startChat({ question, pipelineContext }) {
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) return { error: body?.error || `chat_failed_${res.status}` };
-    return body; // { chatId, status: 'processing' }
+    return body;
   } catch (err) {
     console.error('[pipelineService] startChat failed:', err);
     return { error: err.message || String(err) };

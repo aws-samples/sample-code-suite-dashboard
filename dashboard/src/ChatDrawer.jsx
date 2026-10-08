@@ -71,7 +71,6 @@ export default function ChatDrawer({ pipelines }) {
       return;
     }
 
-    // Poll for completion.
     const timer = setInterval(() => setElapsedMs(Date.now() - started), 500);
     try {
       while (!cancelRef.current) {
@@ -94,7 +93,6 @@ export default function ChatDrawer({ pipelines }) {
           setError(status.error || 'chat_failed');
           break;
         }
-        // status is 'processing' — keep polling
       }
     } finally {
       clearInterval(timer);
