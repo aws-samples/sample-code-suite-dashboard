@@ -695,7 +695,7 @@ function AwsTopBar() {
       <div className="hidden sm:block text-[12.5px]">
         <span className="opacity-70">Region:</span> <span className="font-medium">us-east-1</span>
       </div>
-      <span className="text-[12.5px] opacity-90 hidden md:inline">observability@hub-org</span>
+      <span className="text-[12.5px] opacity-90 hidden md:inline">dashboard@example</span>
     </div>
   );
 }

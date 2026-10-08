@@ -20,7 +20,7 @@ console's validation rules (learned the hard way):
 1. **Description** (required). Only these characters are allowed: letters,
    numbers, spaces, `_ . , ! ? -`. No slashes, colons, parentheses, or em
    dashes. A safe value:
-   `Read-only connector for the AWS Code Suite observability dashboard.`
+   `Read-only connector for the AWS Code Suite Dashboard.`
 2. **Base URL** (required). Must be the connector base *including* the
    `/connector` suffix, no trailing slash:
    `{{CONNECTOR_BASE_URL}}`
