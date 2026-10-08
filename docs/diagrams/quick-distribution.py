@@ -1,7 +1,7 @@
 """Generate the proposed distribution and customer-install architecture.
 
-Run: python3 docs/diagrams/quick_distribution_diagram.py
-Output: docs/diagrams/quick_distribution_diagram.png
+Run: python3 docs/diagrams/quick-distribution.py
+Output: docs/diagrams/quick-distribution.png
 """
 
 from diagrams import Cluster, Diagram, Edge
@@ -27,7 +27,7 @@ EDGE = {"penwidth": "2.5", "fontsize": "14"}
 
 with Diagram(
     "Distributable Code Suite dashboard for Amazon Quick customers",
-    filename="docs/diagrams/quick_distribution_diagram",
+    filename="docs/diagrams/quick-distribution",
     show=False,
     direction="LR",
     graph_attr=GRAPH,

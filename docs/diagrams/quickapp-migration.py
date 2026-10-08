@@ -1,7 +1,7 @@
 """Proposed migration architecture: dashboard -> Amazon Quick App.
 
-Run: python3 docs/diagrams/quickapp_migration_diagram.py
-Output: docs/diagrams/quickapp_migration_diagram.png
+Run: python3 docs/diagrams/quickapp-migration.py
+Output: docs/diagrams/quickapp-migration.png
 
 Shows the target state for hosting the dashboard as an app in Amazon Quick.
 The sandboxed app cannot call API Gateway directly, so the read path is
@@ -34,7 +34,7 @@ edge_attr = {"penwidth": "2.5", "fontsize": "14"}
 
 with Diagram(
     "Migration target: dashboard as an app in Amazon Quick",
-    filename="docs/diagrams/quickapp_migration_diagram",
+    filename="docs/diagrams/quickapp-migration",
     show=False,
     direction="LR",
     graph_attr=graph_attr,
