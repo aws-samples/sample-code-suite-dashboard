@@ -1,6 +1,6 @@
-# AWS Code Observability Dashboard
+# AWS Code Suite Dashboard
 
-_Cross-account observability for AWS CodePipeline and CodeBuild, with an AWS DevOps Agent chat assistant._
+_Cross-account visibility for AWS CodePipeline and CodeBuild, with an AWS DevOps Agent chat assistant._
 
 It captures every pipeline execution and build event into a central data lake,
 enriches it with per-stage detail, exposes it through an HTTP API, and renders
