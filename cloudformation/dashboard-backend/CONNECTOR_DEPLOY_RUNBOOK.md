@@ -139,7 +139,7 @@ python3 scripts/render_quick_app.py --stack-name "$CFN_STACK_NAME"
 
 This produces (gitignored, account-specific):
 - `connector/openapi.generated.json` — import this into Quick.
-- `connector/QUICK_APP_PROMPT.generated.md` — the phased build prompt.
+- `connector/QUICK_APP_PROMPT.generated.md` — the app-build prompt (paste the whole file).
 
 ## 8. Create the Amazon Quick connector
 
@@ -151,10 +151,11 @@ This produces (gitignored, account-specific):
 
 ## 9. Build the Quick app
 
-Follow `connector/QUICK_APP_PROMPT.generated.md` — point the Quick app builder
-at your local clone (`frontend/src/App.jsx` as the visual reference) and work
-through the phases. See that file's Teardown section (and `CONNECTOR_TEARDOWN.md`)
-for how to delete the app + connector when you're done.
+Create a new app, choose the connector, and paste the whole of
+`connector/QUICK_APP_PROMPT.generated.md` as one message. It rebuilds the
+local React dashboard (`frontend/src/App.jsx`). See `QUICK_APP_QUICKSTART.md`
+Part 4 for what to check, and `CONNECTOR_TEARDOWN.md` for how to delete the
+app and connector when you're done.
 
 ## 10. First validation of the array-schema risk
 

@@ -5,7 +5,7 @@ End-to-end walkthrough for standing up the whole solution: the AWS backend
 connector. This is the "start here" guide; the other docs go deeper:
 
 - `CONNECTOR_DEPLOY_RUNBOOK.md` - detailed backend deploy + connector wiring.
-- `connector/QUICK_APP_PROMPT.generated.md` - the phased app-build prompts
+- `connector/QUICK_APP_PROMPT.generated.md` - the single app-build prompt
   (produced by `scripts/render_quick_app.py`).
 - `CONNECTOR_ROUTE_CONTRACT.md` - the connector API design.
 - `CONNECTOR_TEARDOWN.md` - full teardown.
@@ -95,8 +95,8 @@ The raw equivalent is
 
 Writes (gitignored, account-specific):
 - `connector/openapi.generated.json` - import into Quick.
-- `connector/QUICK_APP_PROMPT.generated.md` - the phased build prompts with your
-  live values.
+- `connector/QUICK_APP_PROMPT.generated.md` - the app-build prompt. The whole
+  file is the prompt: paste all of it.
 
 Fetch the connector client secret (needed for the connector's auth step; not
 stored in the repo):
@@ -145,24 +145,39 @@ real deploy.)
 
 ## Part 4 - Build the app (prompt-only)
 
-Apps -> create a new app. **No file attach needed** - paste the phased prompts
-from `connector/QUICK_APP_PROMPT.generated.md`, one phase at a time, verifying
-each:
+Apps -> create a new app and choose the OpenAPI connector from Part 3. **No file
+attach needed.** Copy the whole of `connector/QUICK_APP_PROMPT.generated.md`
+and send it as one message:
 
-1. **Phase 1 - Overview**: four stat tiles from `getStats`. Verify real numbers
-   (not zeros/placeholders).
-2. **Phase 2 - Pipelines list**: cards from `getPipelines` with filters +
-   pagination.
-3. **Phase 3 - Detail**: stage stepper + run-history sparkline from
-   `getPipeline`.
+```bash
+pbcopy < cloudformation/dashboard-backend/connector/QUICK_APP_PROMPT.generated.md   # macOS
+```
+
+The prompt describes the local React dashboard (`frontend/src/App.jsx`) in
+detail: the top bar with the Region and account in view, breadcrumbs and
+header, the account dropdown, four stat tiles, the filter tabs and search, and
+the pipeline cards with stage bars and run history. It uses `getAccounts`,
+`getPipelines`, and `getPipeline` for every pipeline, and computes the stat
+tiles from run history the way the React app does. It doesn't use `getStats`,
+which only counts the central account.
+
+Check the result:
+- The top bar shows a real Region and 12-digit account number, and the account
+  dropdown lists every tracked account.
+- There's a card for every pipeline in every tracked account, with real stages,
+  versions, durations, and run-history bars.
+- The tile numbers match the cards, and the tabs, search, and account dropdown
+  narrow the cards.
 
 Tips learned live:
-- Include "**use the real <action> connector action - do not mock or hardcode
-  data**" in each phase; app builders otherwise tend to stub data on the first
-  pass.
-- If a view looks visually off, paste the relevant snippet of
-  `frontend/src/App.jsx` as a targeted follow-up for just that piece.
-- The app auto-refreshes, so the Overview updates as new pipeline runs land.
+- If the builder shows sample or placeholder data, reply "Use the real
+  connector actions. Do not mock data."
+- If one piece looks off, reply with that piece's paragraph from the prompt, or
+  paste the matching component from `frontend/src/App.jsx` (`AwsTopBar`,
+  `AccountSwitcher`, `StatCard`, `FilterTabs`, `PipelineCard`, `StageStepper`,
+  `Sparkline`) and ask the builder to match it.
+- The app refreshes every 30 seconds, so new pipeline runs show up on their own.
+- The DevOps Agent chat isn't included: the connector is read-only.
 
 When it looks right, **Publish** and choose an access level (Account-level to
 share with your org's Quick users; there is no anonymous/public option for a
