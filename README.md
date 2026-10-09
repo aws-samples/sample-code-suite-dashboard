@@ -2,15 +2,18 @@
 
 _Cross-account visibility for AWS CodePipeline and CodeBuild, with an AWS DevOps Agent chat assistant._
 
+![The CodeSuite Dashboard: summary cards for total pipelines, running executions, failures and 24-hour success rate above a filterable list of pipeline cards, each showing account, region, branch, stage progress, last run and recent run history.](docs/dashboard-image.png)
+
 It captures every pipeline execution and build event into a central data lake,
 enriches it with per-stage detail, exposes it through an HTTP API, and renders
 it as an **app in Amazon Quick**. A local React dashboard is included as an
 optional developer view over the same API.
 
-The dashboard also embeds an **AWS DevOps Agent** chat, so users can ask
-natural-language questions about a specific pipeline ("why is this
+The local React dashboard also embeds an **AWS DevOps Agent** chat, so users
+can ask natural-language questions about a specific pipeline ("why is this
 failing?", "which stage is the bottleneck?") and get answers backed by
-the agent's live investigation of AWS resources.
+the agent's live investigation of AWS resources. The chat is not available
+in the Amazon Quick app.
 
 The infrastructure is deployed with **CloudFormation** (`cloudformation/`) —
 three self-contained stacks (central backend, cross-account reader, and
@@ -81,31 +84,9 @@ unsigned requests.
 - Python 3.10+ (for `scripts/awscall.py` and CodeCommit's git remote helper)
 - `git-remote-codecommit` for seeding sample pipelines:
   `pip install --user git-remote-codecommit`
-- An IAM identity (user, role, or SSO permission set) to run the dashboard as.
-  The Vite dev server picks it up from the standard AWS credential chain (env
-  vars, `~/.aws/credentials`, SSO) and uses it to SigV4-sign every API call.
-  It needs:
-  - `execute-api:Invoke` on
-    `arn:aws:execute-api:<region>:<account>:<api-id>/*/*` — granted by the
-    managed policy emitted as the `ApiInvokePolicyArn` stack output. The
-    Quick-start steps attach this for you.
-  - The usual AWS sign-in permissions for the credential source you're using
-    (`sts:AssumeRoleWithSSO` for SSO, `sts:AssumeRole` for assumed roles,
-    long-lived access keys for an IAM user). These are governed by your
-    SSO/role config, not by this project.
-
-  Minimum standalone policy (equivalent to attaching `ApiInvokePolicyArn`):
-
-  ```json
-  {
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Action": "execute-api:Invoke",
-      "Resource": "arn:aws:execute-api:<region>:<account>:<api-id>/*/*"
-    }]
-  }
-  ```
+- AWS credentials for the identity that runs the dashboard, with
+  `execute-api:Invoke` on the API. The [Quick start](#quick-start) attaches
+  the `ApiInvokePolicyArn` managed policy, which grants this.
 
 ## Quick start
 
@@ -178,97 +159,35 @@ them at runtime.
 
 ## DevOps Agent chat
 
-The dashboard ships with a chat drawer (bottom-right of the UI) that talks
-to [AWS DevOps Agent](https://aws.amazon.com/devops-agent/) via a
-dedicated worker Lambda. Users pick a pipeline, ask a question, and the
-agent investigates the live AWS environment to answer — for example:
+The local React dashboard has an **Ask DevOps Agent** chat. Pick a pipeline
+and ask a question, such as "Why is this pipeline failing?", and
+[AWS DevOps Agent](https://aws.amazon.com/devops-agent/) investigates your
+AWS resources, including CodeBuild logs, to answer. Answers take 20–90
+seconds.
 
-- "Why is this pipeline failing?"
-- "Which stage is the bottleneck?"
-- "Look at the latest CodeBuild logs and summarize the error."
-- "What changed since the last successful run?"
+> [!IMPORTANT]
+> The chat is not available in the Amazon Quick app. The Quick connector is
+> read-only, and the chat needs SigV4-signed `POST` requests.
 
-### How it works
+To turn it on:
 
-Because DevOps Agent investigations can take longer than API Gateway's
-30-second integration timeout, the chat uses an async request-response
-pattern:
+1. [Create an AgentSpace](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html)
+   in the same account and region as the dashboard, with this account
+   associated.
+2. Redeploy with its ID:
 
-```
-POST /chat
-  ├─ persist { chatId, status: "processing" } to DynamoDB
-  ├─ invoke chat-worker Lambda (async)
-  └─ return { chatId } immediately
+   ```bash
+   make deploy-cfn-dashboard DEVOPS_AGENT_SPACE_ID=<agent-space-id>
+   ```
 
-chat-worker Lambda
-  ├─ devops-agent:CreateChat   (against the AgentSpace)
-  ├─ devops-agent:SendMessage  (streaming EventStream)
-  ├─ accumulate text deltas until responseCompleted
-  └─ UpdateItem { status: "succeeded", answer } in DynamoDB
+Without an AgentSpace, the rest of the dashboard works normally and the chat
+shows "AWS DevOps Agent isn't set up" with a setup link.
 
-GET /chat/{chatId}
-  └─ return current DynamoDB state (the UI polls every 2s)
-```
+DevOps Agent is billed per investigation, and each question starts one. See
+[pricing](https://aws.amazon.com/devops-agent/pricing/).
 
-The chat state table (`pipeline-dashboard-chat`) has a 24-hour TTL, so
-records auto-delete.
-
-### What the chat backend needs
-
-The chat backend is part of the `dashboard-backend` CloudFormation stack and
-uses an **existing** AgentSpace that you pass in as `DevOpsAgentSpaceId`:
-
-```bash
-make deploy-cfn-dashboard DEVOPS_AGENT_SPACE_ID=<agent-space-id>
-```
-
-If you don't have an AgentSpace, deploy without it. The `POST /chat` and
-`GET /chat/{chatId}` routes still exist, but `POST /chat` returns HTTP 503
-`devops_agent_not_configured`, and the chat drawer shows "AWS DevOps Agent
-isn't set up" with a link to
-[Creating an Agent Space](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html).
-No chat table or worker Lambda is created until the ID is set. If the ID is
-set but the AgentSpace doesn't exist in this account and region, the worker
-reports the same error.
-
-With `DevOpsAgentSpaceId` set, the stack adds:
-
-- A DynamoDB table with a 24-hour TTL (`pipeline-dashboard-chat`) for chat
-  state.
-- A chat-worker Lambda (`pipeline-dashboard-chat-worker`) whose IAM is scoped
-  to `aidevops:GetAgentSpace`, `aidevops:CreateChat` and
-  `aidevops:SendMessage` on that AgentSpace ARN only. Async retries are off
-  so a failure never starts a second billed investigation.
-- An inline policy letting the stats Lambda write the chat table and invoke
-  the worker.
-
-The AgentSpace itself, its monitoring role (`AIDevOpsAgentAccessPolicy`) and
-the account association are created outside this stack (console, CLI, or
-the [DevOps Agent CloudFormation guide](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-getting-started-with-aws-devops-agent-using-aws-cloudformation.html)).
-The AgentSpace must have this account associated so the agent can read
-CodePipeline and CodeBuild.
-
-### Prerequisites
-
-- **AWS DevOps Agent must be enabled** in the deployment account and
-  region. It's a managed service — enable it once via the AWS console.
-- An AgentSpace in the same account and region as the dashboard stack, with
-  this account associated. Pass its ID as `DEVOPS_AGENT_SPACE_ID`.
-- Available regions (at time of writing): `us-east-1`, `us-west-2`,
-  `ap-southeast-2`, `ap-northeast-1`, `eu-west-1`, `eu-central-1`.
-
-### Cost
-
-DevOps Agent is billed per investigation and is not free. Bounds on the
-demo:
-
-- The chat Lambda's IAM is scoped to a single AgentSpace ARN.
-- The worker Lambda has a 5-minute timeout.
-- Chat records TTL out after 24 hours.
-
-Estimate cost with the [AWS DevOps Agent pricing
-page](https://aws.amazon.com/devops-agent/pricing/) before enabling in a
-production account.
+Setup details, how it works, and troubleshooting:
+[`docs/devops-agent-chat.md`](docs/devops-agent-chat.md).
 
 ## Security model
 
