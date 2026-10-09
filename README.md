@@ -50,6 +50,8 @@ OAuth2-authorized OpenAPI **connector**. The connector adds a Cognito-backed
 JWT authorizer and a set of flat, paginated `/connector/*` routes alongside the
 backend's IAM routes.
 
+![The CodeSuite Dashboard app in Amazon Quick: a console-style top bar with the Region and number of accounts, summary tiles for total pipelines, running executions, failures and 24-hour success rate, filter tabs and search, and a card per pipeline across two accounts.](docs/quick-app-image.png)
+
 ![Connector architecture: an app in Amazon Quick calls an OpenAPI action connector authenticated with OAuth2 client credentials, which reaches a JWT-authorized HTTP API and the stats Lambda over the same data lake and ingestion backend.](docs/diagrams/connector.png)
 
 See [`cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md`](cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md)
@@ -108,8 +110,18 @@ make deploy-cfn-sample-pipelines
 make seed-cfn-samples
 ```
 
+Seeding doesn't start the pipelines, so start each one once:
+
+```bash
+for p in sample-node-api-pipeline sample-python-api-pipeline sample-static-site-pipeline; do
+  aws codepipeline start-pipeline-execution --name "$p"
+done
+```
+
 Attach the API invoke policy (the `ApiInvokePolicyArn` output from the backend
-deploy) to the principal that will call the API:
+deploy) to the principal that will call the API. The command below is for an
+IAM user. For a role, use `aws iam attach-role-policy` instead; an admin role
+already has access.
 
 ```bash
 aws iam attach-user-policy \
@@ -122,6 +134,104 @@ aws iam attach-user-policy \
 
 See `cloudformation/README.md` for per-stack deploy details and the
 parameters each stack accepts.
+
+## Build the app in Amazon Quick
+
+Use a Region where Amazon Quick is available. Creating a connector needs a
+Quick **Enterprise** subscription.
+
+### 1. Deploy the backend with the connector
+
+Pick a globally unique prefix for the connector's Cognito sign-in domain, for
+example `pipeline-dashboard-<your-account-id>`:
+
+```bash
+make deploy-cfn-connector CONNECTOR_DOMAIN_PREFIX=<unique-prefix>
+make render-quick-app
+```
+
+`render-quick-app` writes two gitignored files to
+`cloudformation/dashboard-backend/connector/`: `openapi.generated.json` (the
+connector definition) and `QUICK_APP_PROMPT.generated.md` (the app prompt).
+
+### 2. Find the connector values
+
+You need five values. Four are outputs of the `pipeline-dashboard` stack, and
+the client secret is in Amazon Cognito.
+
+| Quick form field | Value | Where to find it |
+|---|---|---|
+| **Base URL** | `ConnectorBaseUrl` output, ending in `/connector` | CloudFormation console → **Stacks** → `pipeline-dashboard` → **Outputs** tab |
+| **Client ID** | `ConnectorClientId` output | Same **Outputs** tab |
+| **Token URL** | `ConnectorTokenUrl` output, ending in `/oauth2/token` | Same **Outputs** tab |
+| **Scope** (if the form asks) | `ConnectorScope` output: `pipeline-dashboard/read` | Same **Outputs** tab |
+| **Client secret** | The app client's secret | Amazon Cognito console → **User pools** → `pipeline-dashboard-connector` → **App clients** → the app client → **Show client secret** |
+
+Open the consoles in the Region where you deployed the stack. To get the same
+values from the CLI instead:
+
+```bash
+# Base URL, client ID, token URL and scope
+aws cloudformation describe-stacks --stack-name pipeline-dashboard \
+  --query 'Stacks[0].Outputs[?starts_with(OutputKey, `Connector`)].[OutputKey,OutputValue]' \
+  --output table
+
+# Client secret
+POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 \
+  --query "UserPools[?Name=='pipeline-dashboard-connector'].Id | [0]" --output text)
+CLIENT_ID=$(aws cloudformation describe-stacks --stack-name pipeline-dashboard \
+  --query 'Stacks[0].Outputs[?OutputKey==`ConnectorClientId`].OutputValue' --output text)
+aws cognito-idp describe-user-pool-client --user-pool-id "$POOL_ID" --client-id "$CLIENT_ID" \
+  --query 'UserPoolClient.ClientSecret' --output text
+```
+
+Treat the client secret like a password. Don't commit it or share it.
+
+### 3. Add the connector in Quick
+
+1. In the Quick console, open **Connectors**, choose the **Create for your
+   team** tab, and search for `OpenAPI`. Choose **OpenAPI Specification**.
+
+   ![The Connectors page in Amazon Quick with the Create for your team tab selected and the OpenAPI Specification connector shown in the search results.](docs/quick-connector-create.png)
+
+   The **Available** tab lists only connectors that already exist. If
+   **Create for your team** is empty, your Quick user needs an Enterprise
+   subscription.
+
+2. Import `cloudformation/dashboard-backend/connector/openapi.generated.json`.
+   For **Description**, use only letters, numbers, spaces and `_ . , ! ? -`,
+   for example `Read-only connector for the AWS Code Suite Dashboard.`
+3. Fill in the connection form with the values from step 2:
+
+   ![The connector's connection form: Connection type and Auth configuration drop-downs, then Base URL, Client ID, Client secret and Token URL fields.](docs/quick-connector-auth.png)
+
+   - **Connection type:** Public network
+   - **Auth configuration:** Service-to-Service OAuth
+   - **Base URL:** `ConnectorBaseUrl`. Paste it, with no trailing slash.
+   - **Client ID:** `ConnectorClientId`
+   - **Client secret:** the secret from Cognito
+   - **Token URL:** `ConnectorTokenUrl`
+   - **Scope:** `pipeline-dashboard/read`, if the form asks for it
+
+4. Check that four actions appear: `getStats`, `getAccounts`, `getPipelines`
+   and `getPipeline`.
+5. Publish the connector. **Everyone in your organization** is a reasonable
+   choice: the connector is read-only and returns only pipeline and build
+   metadata. All users share one credential, so restrict it if your pipeline
+   or account names are sensitive.
+
+### 4. Build and publish the app
+
+Go to **Apps → Create app**, choose the connector, and paste the whole of
+`connector/QUICK_APP_PROMPT.generated.md` as one message. It rebuilds the
+local React dashboard in Quick. When it looks right, choose **Publish** and
+share it with your Quick users.
+
+The Quick app can run in a different account from the backend, such as a
+member account of your organization, because the connector reaches the API
+over HTTPS with OAuth. See
+[`QUICK_APP_QUICKSTART.md`](cloudformation/dashboard-backend/QUICK_APP_QUICKSTART.md)
+for what to check in the app and how to tear everything down.
 
 ## Running the local React dashboard
 
