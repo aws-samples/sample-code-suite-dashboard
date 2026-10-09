@@ -1,8 +1,8 @@
-# AWS Code Suite Dashboard
+# AWS CodeSuite Dashboard
 
 _Cross-account visibility for AWS CodePipeline and CodeBuild, with an AWS DevOps Agent chat assistant._
 
-![The CodeSuite Dashboard: summary cards for total pipelines, running executions, failures and 24-hour success rate above a filterable list of pipeline cards, each showing account, region, branch, stage progress, last run and recent run history.](docs/dashboard-image.png)
+![The AWS CodeSuite Dashboard: summary cards for total pipelines, running executions, failures and 24-hour success rate above a filterable list of pipeline cards, each showing account, region, branch, stage progress, last run and recent run history.](docs/dashboard-image.png)
 
 It captures every pipeline execution and build event into a central data lake,
 enriches it with per-stage detail, exposes it through an HTTP API, and renders
@@ -50,7 +50,7 @@ OAuth2-authorized OpenAPI **connector**. The connector adds a Cognito-backed
 JWT authorizer and a set of flat, paginated `/connector/*` routes alongside the
 backend's IAM routes.
 
-![The CodeSuite Dashboard app in Amazon Quick: a console-style top bar with the Region and number of accounts, summary tiles for total pipelines, running executions, failures and 24-hour success rate, filter tabs and search, and a card per pipeline across two accounts.](docs/quick-app-image.png)
+![The AWS CodeSuite Dashboard app in Amazon Quick: a console-style top bar with the Region and number of accounts, summary tiles for total pipelines, running executions, failures and 24-hour success rate, filter tabs and search, and a card per pipeline across two accounts.](docs/quick-app-image.png)
 
 ![Connector architecture: an app in Amazon Quick calls an OpenAPI action connector authenticated with OAuth2 client credentials, which reaches a JWT-authorized HTTP API and the stats Lambda over the same data lake and ingestion backend.](docs/diagrams/connector.png)
 
@@ -200,7 +200,7 @@ Treat the client secret like a password. Don't commit it or share it.
 
 2. Import `cloudformation/dashboard-backend/connector/openapi.generated.json`.
    For **Description**, use only letters, numbers, spaces and `_ . , ! ? -`,
-   for example `Read-only connector for the AWS Code Suite Dashboard.`
+   for example `Read-only connector for the AWS CodeSuite Dashboard.`
 3. Fill in the connection form with the values from step 2:
 
    ![The connector's connection form: Connection type and Auth configuration drop-downs, then Base URL, Client ID, Client secret and Token URL fields.](docs/quick-connector-auth.png)

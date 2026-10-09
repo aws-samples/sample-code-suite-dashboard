@@ -714,7 +714,7 @@ function AwsTopBar({ accounts, selected }) {
         </span>
       </div>
       <span className="h-5 w-px bg-[#414d5c]"/>
-      <span className="pl-3 pr-2 text-[14px] font-bold text-white whitespace-nowrap">CodeSuite Dashboard</span>
+      <span className="pl-3 pr-2 text-[14px] font-bold text-white whitespace-nowrap">AWS CodeSuite Dashboard</span>
       <div className="flex-1"/>
       <span className={navItem} title={regions.length > 1 ? regions.join(", ") : "Region of the account in view"}>
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
@@ -850,7 +850,7 @@ export default function App() {
       <div className="flex flex-1 min-h-0">
         <main className="flex-1 min-w-0 overflow-auto">
           <nav aria-label="Breadcrumbs" className="px-7 pt-4 text-[14px] flex items-center gap-2">
-            <span className="text-[#0972d3]">CodeSuite Dashboard</span>
+            <span className="text-[#0972d3]">AWS CodeSuite Dashboard</span>
             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="#5f6b7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
             <span className="text-[#5f6b7a]">Pipelines</span>
           </nav>

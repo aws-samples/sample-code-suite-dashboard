@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Cross-account reader role for the AWS Code Suite Dashboard.
+  Cross-account reader role for the AWS CodeSuite Dashboard.
   Deploy this stack into every AWS account whose CodePipeline + CodeBuild
   activity should appear in the central dashboard. Read-only — see policy
   statements below.

@@ -1,4 +1,4 @@
-Build an app called "CodeSuite Dashboard". It must look and behave like an
+Build an app called "AWS CodeSuite Dashboard". It must look and behave like an
 AWS Management Console service page in the AWS Cloudscape design system,
 light mode. Follow every detail below exactly. Use only my connector actions
 `getAccounts`, `getPipelines` and `getPipeline` for data. Do not mock, stub,
@@ -48,7 +48,7 @@ left padding.
 - Left: an "aws" wordmark: the lowercase letters "aws" in bold white Arial,
   17px, tight letter spacing, with an orange `#ff9900` curved smile under the
   letters that ends in a small arrowhead on the right. Then a 1px × 20px
-  vertical divider in `#414d5c`. Then "CodeSuite Dashboard" in bold white
+  vertical divider in `#414d5c`. Then "AWS CodeSuite Dashboard" in bold white
   14px, with 12px padding on the left.
 - Right: the Region in view: a white globe icon followed by the Region in
   white 14px, for example "us-east-1". If the selected accounts are in
@@ -63,7 +63,7 @@ left padding.
 **4. Breadcrumbs and page header**
 
 The content area has 28px left and right padding.
-- Breadcrumbs, 16px below the top bar, 14px: "CodeSuite Dashboard" in
+- Breadcrumbs, 16px below the top bar, 14px: "AWS CodeSuite Dashboard" in
   `#0972d3`, a small grey right-chevron, then "Pipelines" in `#5f6b7a`.
 - 12px below, the page header row. On the left:
   - The title "Pipelines" in 24px bold `#000716`, followed by the number of
