@@ -146,7 +146,7 @@ export default function ChatDrawer({ pipelines }) {
         </div>
         <button
           onClick={() => setOpen(false)}
-          className="h-7 w-7 rounded hover:bg-[#f7f8f8] inline-flex items-center justify-center text-[#5f6b7a]"
+          className="h-7 w-7 rounded-sm hover:bg-[#f7f8f8] inline-flex items-center justify-center text-[#5f6b7a]"
           aria-label="Close chat"
         >
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
@@ -160,7 +160,7 @@ export default function ChatDrawer({ pipelines }) {
         <select
           value={pipelineName}
           onChange={(e) => { setPipelineName(e.target.value); setResponse(null); setError(null); }}
-          className="w-full h-8 px-2 rounded-[2px] bg-white text-[12.5px] text-[#16191f] border border-[#d1d5db] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20 outline-none"
+          className="w-full h-8 px-2 rounded-[2px] bg-white text-[12.5px] text-[#16191f] border border-[#d1d5db] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20 outline-hidden"
         >
           {(pipelines || []).length === 0 && <option value="">No pipelines available</option>}
           {(pipelines || []).map((p) => (
@@ -210,7 +210,7 @@ export default function ChatDrawer({ pipelines }) {
               <li>Create an AgentSpace in this account and region, with this account associated.</li>
               <li>
                 Redeploy with its ID:{' '}
-                <code className="font-mono text-[11.5px] bg-white border border-[#d1d5db] rounded px-1">
+                <code className="font-mono text-[11.5px] bg-white border border-[#d1d5db] rounded-sm px-1">
                   make deploy-cfn-dashboard DEVOPS_AGENT_SPACE_ID=&lt;id&gt;
                 </code>
               </li>
@@ -231,8 +231,8 @@ export default function ChatDrawer({ pipelines }) {
         {error && error.code !== NOT_CONFIGURED && (
           <div className="rounded-lg border border-[#f1cdc7] bg-[#fdf3f1] text-[#d91515] px-3 py-2 text-[12.5px]">
             <div className="font-semibold mb-0.5">Chat failed</div>
-            <div className="font-mono text-[11.5px] break-words">{error.code}</div>
-            {error.message && <div className="mt-1 text-[12px] break-words text-[#5f6b7a]">{error.message}</div>}
+            <div className="font-mono text-[11.5px] wrap-break-word">{error.code}</div>
+            {error.message && <div className="mt-1 text-[12px] wrap-break-word text-[#5f6b7a]">{error.message}</div>}
           </div>
         )}
         {response?.answer && (
@@ -256,7 +256,7 @@ export default function ChatDrawer({ pipelines }) {
           placeholder={selectedPipeline ? `Ask about ${selectedPipeline.name}…` : 'Select a pipeline first…'}
           disabled={!selectedPipeline || busy}
           rows={2}
-          className="w-full resize-none px-2.5 py-1.5 rounded-[2px] bg-white text-[13px] text-[#16191f] border border-[#d1d5db] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20 outline-none disabled:opacity-60"
+          className="w-full resize-none px-2.5 py-1.5 rounded-[2px] bg-white text-[13px] text-[#16191f] border border-[#d1d5db] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20 outline-hidden disabled:opacity-60"
         />
         <div className="mt-2 flex items-center justify-between">
           <span className="text-[10.5px] text-[#7d8998]">{question.length}/2000 · ⌘/Ctrl + Enter to send</span>

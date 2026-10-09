@@ -529,15 +529,15 @@ function AccountSwitcher({ accounts, selected, onChange }) {
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder={`Search ${accounts.length} accounts…`}
-                className="w-full h-8 pl-8 pr-7 rounded-[2px] bg-white text-[#16191f] text-[12.5px] placeholder:text-[#7d8998] outline-none border border-[#d1d5db] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20"
+                className="w-full h-8 pl-8 pr-7 rounded-[2px] bg-white text-[#16191f] text-[12.5px] placeholder:text-[#7d8998] outline-hidden border border-[#d1d5db] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20"
               />
               {query && (
                 <button
                   onClick={() => setQuery("")}
-                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#7d8998] hover:text-[#16191f] h-5 w-5 inline-flex items-center justify-center rounded"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#7d8998] hover:text-[#16191f] h-5 w-5 inline-flex items-center justify-center rounded-sm"
                   title="Clear"
                 >
-                  <Icon.X className="!w-3 !h-3"/>
+                  <Icon.X className="w-3! h-3!"/>
                 </button>
               )}
             </div>
@@ -553,7 +553,7 @@ function AccountSwitcher({ accounts, selected, onChange }) {
                 <button
                   onClick={selectVisible}
                   disabled={visibleSelectedCount === filtered.length}
-                  className="px-2 h-6 rounded text-[11.5px] text-[#0972d3] hover:bg-[#f1f8fd] disabled:opacity-40 disabled:hover:bg-transparent"
+                  className="px-2 h-6 rounded-sm text-[11.5px] text-[#0972d3] hover:bg-[#f1f8fd] disabled:opacity-40 disabled:hover:bg-transparent"
                   title="Select all visible"
                 >
                   Select {query ? "matching" : "all"}
@@ -562,7 +562,7 @@ function AccountSwitcher({ accounts, selected, onChange }) {
                 <button
                   onClick={clearVisible}
                   disabled={visibleSelectedCount === 0}
-                  className="px-2 h-6 rounded text-[11.5px] text-[#5f6b7a] hover:bg-[#f7f8f8] disabled:opacity-40 disabled:hover:bg-transparent"
+                  className="px-2 h-6 rounded-sm text-[11.5px] text-[#5f6b7a] hover:bg-[#f7f8f8] disabled:opacity-40 disabled:hover:bg-transparent"
                   title="Clear visible"
                 >
                   Clear
@@ -598,7 +598,7 @@ function AccountSwitcher({ accounts, selected, onChange }) {
                             : "bg-white border-[#7d8998]"
                         }`}
                       >
-                        {checked && <Icon.Check className="!w-3 !h-3"/>}
+                        {checked && <Icon.Check className="w-3! h-3!"/>}
                       </span>
                       <span className="min-w-0 flex-1 flex flex-col">
                         <span className="text-[12.5px] text-[#16191f] truncate">
@@ -615,7 +615,7 @@ function AccountSwitcher({ accounts, selected, onChange }) {
                     </button>
                     <button
                       onClick={() => selectOnly(a.id)}
-                      className="opacity-0 group-hover:opacity-100 px-1.5 h-6 text-[10.5px] text-[#0972d3] hover:bg-[#e1effa] rounded transition-opacity"
+                      className="opacity-0 group-hover:opacity-100 px-1.5 h-6 text-[10.5px] text-[#0972d3] hover:bg-[#e1effa] rounded-sm transition-opacity"
                       title={`Show only ${a.alias}`}
                     >
                       Only
@@ -707,7 +707,7 @@ function AwsTopBar({ accounts, selected }) {
         {/* AWS-style wordmark: HTML text (crisp, no SVG font metrics) over an orange smile */}
         <span className="inline-flex flex-col items-start leading-none select-none" aria-label="AWS">
           <span className="text-white text-[17px] font-bold tracking-[-0.03em] font-[Arial,Helvetica,sans-serif] leading-[15px]">aws</span>
-          <svg viewBox="0 0 32 8" width="32" height="8" className="-mt-[1px]" aria-hidden="true">
+          <svg viewBox="0 0 32 8" width="32" height="8" className="-mt-px" aria-hidden="true">
             <path d="M1.5 1.5 Q14 8 27.5 2" fill="none" stroke="#ff9900" strokeWidth="2" strokeLinecap="round"/>
             <path d="M24.5 0.8 L29.5 1.2 L27.8 5.6" fill="none" stroke="#ff9900" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
@@ -904,7 +904,7 @@ export default function App() {
                 <input
                   value={query} onChange={e => setQuery(e.target.value)}
                   placeholder="Search pipelines, repos, versions"
-                  className="w-full h-8 pl-8 pr-3 rounded-lg bg-white text-[#000716] text-[14px] placeholder:text-[#5f6b7a] placeholder:italic outline-none border-2 border-[#7d8998] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20"
+                  className="w-full h-8 pl-8 pr-3 rounded-lg bg-white text-[#000716] text-[14px] placeholder:text-[#5f6b7a] placeholder:italic outline-hidden border-2 border-[#7d8998] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20"
                 />
               </div>
             </div>
