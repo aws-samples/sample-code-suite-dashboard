@@ -20,7 +20,7 @@ const ReactCompilerConfig = {
  * credentials — they live on the developer's machine and are loaded via
  * the standard AWS credential chain (env vars, ~/.aws/credentials, SSO).
  *
- * Required env (dashboard/.env):
+ * Required env (frontend/.env):
  *   VITE_API_URL        - https://<api-id>.execute-api.<region>.amazonaws.com
  *
  * Optional:
@@ -35,7 +35,7 @@ function awsSigV4Proxy(env) {
       const rawApiUrl = env.VITE_API_URL;
       if (!rawApiUrl) {
         console.warn(
-          '[aws-sigv4-proxy] VITE_API_URL is not set. Create dashboard/.env with ' +
+          '[aws-sigv4-proxy] VITE_API_URL is not set. Create frontend/.env with ' +
           'VITE_API_URL=https://<api-id>.execute-api.<region>.amazonaws.com'
         );
         return;

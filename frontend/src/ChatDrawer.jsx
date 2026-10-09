@@ -3,6 +3,19 @@ import { startChat, getChatStatus } from './pipelineService.js';
 
 const POLL_INTERVAL_MS = 2000;
 const POLL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes — matches the worker Lambda timeout
+const NOT_CONFIGURED = 'devops_agent_not_configured';
+const DEFAULT_SETUP_URL =
+  'https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html';
+
+// Normalize API/worker failures into { code, message, setupUrl }.
+function toError(src, fallback) {
+  if (typeof src === 'string') return { code: src };
+  return {
+    code: src?.error || fallback,
+    message: src?.message,
+    setupUrl: src?.setupUrl,
+  };
+}
 
 /**
  * ChatDrawer — DevOps Agent chat pinned to the bottom-right of the dashboard.
@@ -60,13 +73,13 @@ export default function ChatDrawer({ pipelines }) {
       pipelineContext: selectedPipeline,
     });
     if (startResult?.error) {
-      setError(startResult.error);
+      setError(toError(startResult));
       setBusy(false);
       return;
     }
     const chatId = startResult.chatId;
     if (!chatId) {
-      setError('missing_chat_id');
+      setError(toError('missing_chat_id'));
       setBusy(false);
       return;
     }
@@ -75,14 +88,14 @@ export default function ChatDrawer({ pipelines }) {
     try {
       while (!cancelRef.current) {
         if (Date.now() - started > POLL_TIMEOUT_MS) {
-          setError('chat_timeout');
+          setError(toError('chat_timeout'));
           break;
         }
         await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
         if (cancelRef.current) break;
         const status = await getChatStatus(chatId);
-        if (status?.error) {
-          setError(status.error);
+        if (status?.error && status.status !== 'failed') {
+          setError(toError(status));
           break;
         }
         if (status.status === 'succeeded') {
@@ -90,7 +103,7 @@ export default function ChatDrawer({ pipelines }) {
           break;
         }
         if (status.status === 'failed') {
-          setError(status.error || 'chat_failed');
+          setError(toError(status, 'chat_failed'));
           break;
         }
       }
@@ -182,10 +195,44 @@ export default function ChatDrawer({ pipelines }) {
             </div>
           </div>
         )}
-        {error && (
-          <div className="rounded-[2px] border border-[#f1cdc7] bg-[#fdf3f1] text-[#d91515] px-3 py-2 text-[12.5px]">
+        {error && error.code === NOT_CONFIGURED && (
+          <div className="rounded-lg border-2 border-[#0972d3] bg-[#f2f8fd] px-3 py-2.5 text-[12.5px] text-[#000716]">
+            <div className="flex items-center gap-1.5 font-bold text-[13px]">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="#0972d3" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <circle cx="8" cy="8" r="7"/><path d="M8 7v4M8 4.5v.5"/>
+              </svg>
+              AWS DevOps Agent isn't set up
+            </div>
+            <p className="mt-1 leading-relaxed text-[#414d5c]">
+              {error.message || 'No DevOps Agent AgentSpace is configured for this dashboard.'}
+            </p>
+            <ol className="mt-2 pl-5 list-decimal space-y-0.5 text-[#414d5c]">
+              <li>Create an AgentSpace in this account and region, with this account associated.</li>
+              <li>
+                Redeploy with its ID:{' '}
+                <code className="font-mono text-[11.5px] bg-white border border-[#d1d5db] rounded px-1">
+                  make deploy-cfn-dashboard DEVOPS_AGENT_SPACE_ID=&lt;id&gt;
+                </code>
+              </li>
+            </ol>
+            <a
+              href={error.setupUrl || DEFAULT_SETUP_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex items-center gap-1 font-bold text-[#0972d3] hover:text-[#033160] hover:underline"
+            >
+              How to create an AgentSpace
+              <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M6 3H3v10h10v-3M9.5 2.5h4v4M13 3 7 9"/>
+              </svg>
+            </a>
+          </div>
+        )}
+        {error && error.code !== NOT_CONFIGURED && (
+          <div className="rounded-lg border border-[#f1cdc7] bg-[#fdf3f1] text-[#d91515] px-3 py-2 text-[12.5px]">
             <div className="font-semibold mb-0.5">Chat failed</div>
-            <div className="font-mono text-[11.5px] break-words">{error}</div>
+            <div className="font-mono text-[11.5px] break-words">{error.code}</div>
+            {error.message && <div className="mt-1 text-[12px] break-words text-[#5f6b7a]">{error.message}</div>}
           </div>
         )}
         {response?.answer && (

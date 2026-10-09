@@ -152,7 +152,7 @@ This produces (gitignored, account-specific):
 ## 9. Build the Quick app
 
 Follow `connector/QUICK_APP_PROMPT.generated.md` — point the Quick app builder
-at your local clone (`dashboard/src/App.jsx` as the visual reference) and work
+at your local clone (`frontend/src/App.jsx` as the visual reference) and work
 through the phases. See that file's Teardown section (and `CONNECTOR_TEARDOWN.md`)
 for how to delete the app + connector when you're done.
 
