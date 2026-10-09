@@ -188,10 +188,10 @@ function hexToRgba(hex, alpha) {
 }
 
 function PillButton({ children, onClick, disabled, primary, dropdown, title, className = "" }) {
-  const base = "inline-flex items-center justify-center gap-2 h-8 px-3 rounded-[20px] text-[13px] font-medium transition-colors select-none whitespace-nowrap";
+  const base = "inline-flex items-center justify-center gap-2 h-8 px-4 rounded-[20px] text-[14px] transition-colors select-none whitespace-nowrap";
   const variant = primary
-    ? "bg-[#ec7211] text-white hover:bg-[#d96813] border border-[#ec7211]"
-    : "bg-white text-[#16191f] border border-[#7d8998] hover:bg-[#f7f8f8]";
+    ? "bg-[#ff9900] text-[#000716] hover:bg-[#ec7211] border-2 border-[#ff9900] font-bold"
+    : "bg-white text-[#0972d3] border-2 border-[#0972d3] hover:bg-[#f2f8fd] hover:text-[#033160] hover:border-[#033160] font-bold";
   const dis = disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer";
   return (
     <button onClick={onClick} disabled={disabled} title={title} className={`${base} ${variant} ${dis} ${className}`}>
@@ -339,7 +339,7 @@ function PipelineCard({ p }) {
   const fwMeta = framework ? FRAMEWORKS[framework] : null;
   const accent = fwMeta ? fwMeta.color : "#9aa7b5";
   return (
-    <article className="bg-white border border-[#e9ebed] rounded-[2px] hover:border-[#9aa7b5] hover:shadow-[0_1px_4px_-1px_rgba(0,28,36,0.1)] transition-all">
+    <article className="bg-white rounded-2xl overflow-hidden shadow-[0_1px_1px_0_rgba(0,28,36,0.3),1px_1px_1px_0_rgba(0,28,36,0.15),-1px_1px_1px_0_rgba(0,28,36,0.15)] hover:shadow-[0_4px_20px_1px_rgba(0,7,22,0.10)] transition-shadow">
       <header className="px-4 pt-3.5 pb-3 border-b border-[#eaedf0]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -363,6 +363,7 @@ function PipelineCard({ p }) {
                 </span>
               )}
               <AccountChip alias={p.accountAlias} id={p.accountId}/>
+              <RegionChip region={p.region}/>
               <span className={`font-mono ${C.textSub}`}>{p.repository}</span>
               <BranchTag branch={p.branch}/>
             </div>
@@ -394,7 +395,7 @@ function PipelineCard({ p }) {
           <div className={`font-mono tabular-nums ${C.text} truncate`}>{fmtDuration(p.durationMs)}</div>
         </div>
       </div>
-      <footer className="px-4 py-2.5 border-t border-[#eaedf0] bg-[#fafbfb] flex items-center justify-between gap-3">
+      <footer className="px-4 py-2.5 border-t border-[#e9ebed] bg-white flex items-center justify-between gap-3">
         <div className="flex items-center gap-2.5">
           <Sparkline history={p.history}/>
           <span className={`text-[11.5px] font-mono tabular-nums ${C.textSub}`}>
@@ -428,17 +429,17 @@ function StatCard({ label, value, sub, tone = "default", onClick, active }) {
         type: "button",
         title: `Filter pipelines: ${label}`,
         className:
-          "text-left bg-white border rounded-[2px] px-4 py-3.5 transition-colors cursor-pointer w-full " +
+          "text-left bg-white rounded-2xl px-5 py-4 transition-all cursor-pointer w-full shadow-[0_1px_1px_0_rgba(0,28,36,0.3),1px_1px_1px_0_rgba(0,28,36,0.15),-1px_1px_1px_0_rgba(0,28,36,0.15)] " +
           (active
-            ? "border-[#0972d3] ring-1 ring-[#0972d3]/30 bg-[#f1f8fd]"
-            : "border-[#e9ebed] hover:border-[#9aa7b5] hover:bg-[#fafbfb]"),
+            ? "ring-2 ring-[#0972d3] bg-[#f2f8fd]"
+            : "hover:bg-[#fafafa]"),
       }
-    : { className: "bg-white border border-[#e9ebed] rounded-[2px] px-4 py-3.5" };
+    : { className: "bg-white rounded-2xl px-5 py-4 shadow-[0_1px_1px_0_rgba(0,28,36,0.3),1px_1px_1px_0_rgba(0,28,36,0.15),-1px_1px_1px_0_rgba(0,28,36,0.15)]" };
   return (
     <Wrap {...wrapProps}>
-      <div className={`text-[13px] font-bold ${C.text}`}>{label}</div>
+      <div className="text-[14px] font-bold text-[#000716]">{label}</div>
       <div className="mt-1 flex items-baseline gap-2">
-        <div className={`text-[28px] leading-none font-normal tabular-nums ${valueColor}`}>{value}</div>
+        <div className={`text-[32px] leading-none font-light tabular-nums ${valueColor}`}>{value}</div>
       </div>
       <div className={`mt-1.5 text-[12px] ${C.textSub}`}>{sub}</div>
     </Wrap>
@@ -518,7 +519,7 @@ function AccountSwitcher({ accounts, selected, onChange }) {
     <div ref={ref} className="relative">
       <PillButton onClick={() => setOpen(o => !o)} dropdown>{label}</PillButton>
       {open && (
-        <div className="absolute right-0 mt-1.5 w-[340px] bg-white border border-[#d1d5db] rounded-[2px] shadow-[0_4px_16px_-4px_rgba(0,28,36,0.18)] z-20">
+        <div className="absolute right-0 mt-1.5 w-[340px] bg-white border-2 border-[#9ba7b6] rounded-lg overflow-hidden shadow-[0_4px_16px_-4px_rgba(0,28,36,0.18)] z-20">
           {/* Header — search */}
           <div className="px-2.5 pt-2.5 pb-2 border-b border-[#eaedf0]">
             <div className="relative">
@@ -631,25 +632,19 @@ function AccountSwitcher({ accounts, selected, onChange }) {
 }
 
 function RefreshControl({ secondsLeft, onRefresh, refreshing }) {
-  const total = REFRESH_INTERVAL_MS / 1000;
-  const pct = Math.max(0, Math.min(1, 1 - secondsLeft / total));
-  const RAD = 13;
-  const CIRC = 2 * Math.PI * RAD;
+  // Console-style icon button. The countdown is shown as text in the page
+  // header ("next in Ns"), so the button itself stays a clean outline.
   return (
-    <div className="flex items-center gap-2">
-      <button onClick={onRefresh} disabled={refreshing} title="Refresh now"
-              className="relative inline-flex items-center justify-center h-8 w-8 rounded-full bg-white border border-[#7d8998] hover:bg-[#f7f8f8]">
-        <svg className="absolute inset-0" viewBox="0 0 32 32" width="32" height="32">
-          <circle cx="16" cy="16" r={RAD} fill="none" stroke="#e9ebed" strokeWidth="1.5"/>
-          <circle cx="16" cy="16" r={RAD} fill="none" stroke="#0972d3" strokeWidth="1.5"
-                  strokeDasharray={CIRC} strokeDashoffset={CIRC * (1 - pct)} strokeLinecap="round"
-                  transform="rotate(-90 16 16)"/>
-        </svg>
-        <span className={refreshing ? "animate-spin text-[#16191f]" : "text-[#16191f]"}>
-          <Icon.Refresh/>
-        </span>
-      </button>
-    </div>
+    <button
+      type="button"
+      onClick={onRefresh}
+      disabled={refreshing}
+      title={`Refresh now (auto-refresh in ${secondsLeft}s)`}
+      aria-label="Refresh"
+      className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-white border-2 border-[#0972d3] text-[#0972d3] hover:bg-[#f2f8fd] hover:border-[#033160] hover:text-[#033160] disabled:border-[#9ba7b6] disabled:text-[#9ba7b6] disabled:cursor-default transition-colors"
+    >
+      <Icon.Refresh className={`block ${refreshing ? "animate-spin" : ""}`}/>
+    </button>
   );
 }
 
@@ -663,7 +658,7 @@ const FILTERS = [
 ];
 function FilterTabs({ value, onChange, counts }) {
   return (
-    <div className="inline-flex rounded-[2px] border border-[#d1d5db] bg-white overflow-hidden">
+    <div className="inline-flex rounded-lg border-2 border-[#7d8998] bg-white overflow-hidden">
       {FILTERS.map((f, i) => {
         const active = value === f.id;
         const n = f.id === "all" ? counts.all : counts[f.id] || 0;
@@ -671,9 +666,9 @@ function FilterTabs({ value, onChange, counts }) {
           <button key={f.id} onClick={() => onChange(f.id)}
                   className={`flex items-center gap-1.5 h-8 px-3 text-[13px] transition-colors ${
                     i > 0 ? "border-l border-[#e9ebed]" : ""
-                  } ${active ? "bg-[#f1f8fd] text-[#033160] font-semibold" : "text-[#5f6b7a] hover:bg-[#f7f8f8]"}`}>
+                  } ${active ? "bg-[#0972d3] text-white font-bold" : "text-[#5f6b7a] hover:bg-[#f7f8f8]"}`}>
             {f.label}
-            <span className={`font-mono tabular-nums text-[11.5px] ${active ? "text-[#0972d3]" : "text-[#7d8998]"}`}>{n}</span>
+            <span className={`font-mono tabular-nums text-[11.5px] ${active ? "text-white/85" : "text-[#7d8998]"}`}>{n}</span>
           </button>
         );
       })}
@@ -681,22 +676,73 @@ function FilterTabs({ value, onChange, counts }) {
   );
 }
 
-function AwsTopBar() {
+// Account ids from /accounts look like "<alias>-<12-digit-id>"; show the
+// 12-digit AWS account number.
+function awsAccountNumber(id) {
+  const m = String(id || "").match(/(\d{12})$/);
+  return m ? m[1] : String(id || "");
+}
+
+// AWS console-style global nav. Region and account reflect what's actually in
+// view: the account(s) selected in the account switcher, as reported by
+// GET /accounts.
+function AwsTopBar({ accounts, selected }) {
+  const inView = accounts.filter(a => selected.includes(a.id));
+  const regions = [...new Set(inView.map(a => a.region).filter(Boolean))];
+
+  const regionLabel = regions.length === 0 ? "—"
+    : regions.length === 1 ? regions[0]
+    : `${regions.length} regions`;
+  const accountLabel = inView.length === 0 ? "No account selected"
+    : inView.length === 1 ? awsAccountNumber(inView[0].id)
+    : `${inView.length} accounts`;
+  const accountAlias = inView.length === 1 ? inView[0].alias : null;
+  const accountTitle = inView.map(a => `${a.alias} · ${awsAccountNumber(a.id)} · ${a.region}`).join("\n")
+    || "No account selected";
+
+  const navItem = "h-[40px] inline-flex items-center gap-1.5 px-2.5 text-[14px] text-white hover:text-[#ff9900] cursor-default";
   return (
-    <div className="bg-[#232f3e] text-[#d5dbdb] h-[44px] flex items-center px-3 gap-3 shrink-0 border-b border-black/30">
-      <button className="h-7 w-7 rounded hover:bg-white/10 inline-flex items-center justify-center" aria-label="Menu">
-        <svg viewBox="0 0 18 18" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-          <path d="M3 5h12M3 9h12M3 13h12"/>
-        </svg>
-      </button>
-      <div className="h-6 w-7 rounded bg-white/10 inline-flex items-center justify-center text-[#ff9900] font-bold text-[11px]">CP</div>
-      <div className="text-[13px] font-semibold hidden sm:block">AWS CodePulse</div>
-      <div className="flex-1"/>
-      <div className="hidden sm:block text-[12.5px]">
-        <span className="opacity-70">Region:</span> <span className="font-medium">us-east-1</span>
+    <nav className="bg-[#232f3e] h-[40px] flex items-center pl-4 pr-2 gap-1 shrink-0 font-[Amazon_Ember,Inter,sans-serif]">
+      <div className="flex items-center gap-2 pr-3">
+        {/* AWS-style wordmark: HTML text (crisp, no SVG font metrics) over an orange smile */}
+        <span className="inline-flex flex-col items-start leading-none select-none" aria-label="AWS">
+          <span className="text-white text-[17px] font-bold tracking-[-0.03em] font-[Arial,Helvetica,sans-serif] leading-[15px]">aws</span>
+          <svg viewBox="0 0 32 8" width="32" height="8" className="-mt-[1px]" aria-hidden="true">
+            <path d="M1.5 1.5 Q14 8 27.5 2" fill="none" stroke="#ff9900" strokeWidth="2" strokeLinecap="round"/>
+            <path d="M24.5 0.8 L29.5 1.2 L27.8 5.6" fill="none" stroke="#ff9900" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </span>
       </div>
-      <span className="text-[12.5px] opacity-90 hidden md:inline">dashboard@example</span>
-    </div>
+      <span className="h-5 w-px bg-[#414d5c]"/>
+      <span className="pl-3 pr-2 text-[14px] font-bold text-white whitespace-nowrap">CodeSuite Dashboard</span>
+      <div className="flex-1"/>
+      <span className={navItem} title={regions.length > 1 ? regions.join(", ") : "Region of the account in view"}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+          <circle cx="8" cy="8" r="6.25"/><path d="M1.75 8h12.5M8 1.75c2.2 2.2 2.2 10.3 0 12.5M8 1.75c-2.2 2.2-2.2 10.3 0 12.5"/>
+        </svg>
+        <span className="font-normal">{regionLabel}</span>
+      </span>
+      <span className="h-5 w-px bg-[#414d5c]"/>
+      <span className={navItem} title={accountTitle}>
+        <span>{accountLabel}</span>
+        {accountAlias && <span className="text-[#d1d5db]">({accountAlias})</span>}
+      </span>
+    </nav>
+  );
+}
+
+function RegionChip({ region }) {
+  if (!region) return null;
+  return (
+    <span
+      title={`Region: ${region}`}
+      className="inline-flex items-center gap-1 bg-[#f2f3f3] text-[#5f6b7a] border border-[#d1d5db] rounded-[10px] px-1.5 py-0.5 font-mono text-[11px]"
+    >
+      <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
+        <circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2c2 2 2 10 0 12M8 2c-2 2-2 10 0 12"/>
+      </svg>
+      {region}
+    </span>
   );
 }
 
@@ -799,16 +845,29 @@ export default function App() {
   }, [pipelines, filter, query]);
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ background: "#f2f3f3" }}>
-      <AwsTopBar/>
+    <div className="min-h-screen flex flex-col" style={{ background: "#ffffff" }}>
+      <AwsTopBar accounts={accounts} selected={selectedAccounts}/>
       <div className="flex flex-1 min-h-0">
         <main className="flex-1 min-w-0 overflow-auto">
-          <header className="px-7 pt-6 pb-3 flex items-center gap-3 flex-wrap">
-            <div className="flex items-baseline gap-2 min-w-0">
-              <h1 className="text-[22px] font-bold text-[#16191f]">Pipelines</h1>
-              <span className={`text-[12.5px] ${C.textSub} ml-2 font-mono tabular-nums`}>
-                last refreshed {fmtAbsolute(lastRefreshed)} · next in {secondsLeft}s
-              </span>
+          <nav aria-label="Breadcrumbs" className="px-7 pt-4 text-[14px] flex items-center gap-2">
+            <span className="text-[#0972d3]">CodeSuite Dashboard</span>
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="#5f6b7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 3 5 5-5 5"/></svg>
+            <span className="text-[#5f6b7a]">Pipelines</span>
+          </nav>
+          <header className="px-7 pt-3 pb-4 flex items-end gap-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2">
+                <h1 className="text-[24px] leading-[30px] font-bold text-[#000716]">
+                  Pipelines <span className="font-normal text-[#5f6b7a]">({pipelines.length})</span>
+                </h1>
+                <span className="text-[14px] font-bold text-[#0972d3]">Info</span>
+              </div>
+              <p className="mt-1 text-[14px] text-[#5f6b7a]">
+                CodePipeline and CodeBuild activity across your tracked accounts.
+                <span className="ml-2 font-mono text-[12.5px] tabular-nums">
+                  Last refreshed {fmtAbsolute(lastRefreshed)} · next in {secondsLeft}s
+                </span>
+              </p>
             </div>
             <div className="flex-1"/>
             <div className="flex items-center gap-2">
@@ -845,7 +904,7 @@ export default function App() {
                 <input
                   value={query} onChange={e => setQuery(e.target.value)}
                   placeholder="Search pipelines, repos, versions"
-                  className="w-full h-8 pl-8 pr-3 rounded-[2px] bg-white text-[#16191f] text-[12.5px] placeholder:text-[#7d8998] outline-none border border-[#7d8998] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20"
+                  className="w-full h-8 pl-8 pr-3 rounded-lg bg-white text-[#000716] text-[14px] placeholder:text-[#5f6b7a] placeholder:italic outline-none border-2 border-[#7d8998] focus:border-[#0972d3] focus:ring-2 focus:ring-[#0972d3]/20"
                 />
               </div>
             </div>
@@ -858,11 +917,11 @@ export default function App() {
             {pipelines.length === 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 {[...Array(6)].map((_, i) => (
-                  <div key={i} className="bg-white border border-[#e9ebed] rounded-[2px] h-44 animate-pulse"/>
+                  <div key={i} className="bg-white rounded-2xl h-44 animate-pulse shadow-[0_1px_1px_0_rgba(0,28,36,0.3),1px_1px_1px_0_rgba(0,28,36,0.15),-1px_1px_1px_0_rgba(0,28,36,0.15)]"/>
                 ))}
               </div>
             ) : visible.length === 0 ? (
-              <div className="py-20 text-center text-[#5f6b7a] text-[13px] bg-white border border-[#e9ebed] rounded-[2px]">
+              <div className="py-20 text-center text-[#5f6b7a] text-[14px] bg-white rounded-2xl shadow-[0_1px_1px_0_rgba(0,28,36,0.3),1px_1px_1px_0_rgba(0,28,36,0.15),-1px_1px_1px_0_rgba(0,28,36,0.15)]">
                 No pipelines match the current filter.
               </div>
             ) : (

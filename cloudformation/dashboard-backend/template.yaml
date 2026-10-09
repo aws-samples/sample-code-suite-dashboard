@@ -89,6 +89,17 @@ Parameters:
     Default: 14
     Description: Retention (days) for Lambda CloudWatch log groups.
 
+  CreateAlarms:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Create the CloudWatch alarms (stats/enrichment Lambda errors + DLQ depth).
+      Leave "false" for the initial deploy: the alarms watch metrics that don't
+      exist until the Lambdas/queue have run at least once, and CloudFormation's
+      early ResourceExistenceCheck validation rejects alarms on not-yet-emitted
+      metrics. After the first deploy, redeploy with CreateAlarms=true to add them.
+
   ConnectorAuthDomainPrefix:
     Type: String
     Default: ""
@@ -99,10 +110,29 @@ Parameters:
       skip creating the connector OAuth stack entirely.
     AllowedPattern: ^$|^[a-z0-9-]{3,63}$
 
+  DevOpsAgentSpaceId:
+    Type: String
+    Default: ""
+    Description: >
+      ID of an existing AWS DevOps Agent AgentSpace in this account and region
+      that the dashboard chat should use. The AgentSpace must already have this
+      account associated (primary account access) so the agent can read
+      CodePipeline/CodeBuild. Leave blank if you don't have one: the chat
+      routes are still deployed but return devops_agent_not_configured with a
+      setup link, and no chat table or worker Lambda is created.
+    AllowedPattern: ^$|^[A-Za-z0-9-]{1,128}$
+
+Mappings:
+  DevOpsAgent:
+    Setup:
+      Url: https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html
+
 Conditions:
   OrgEnabledCondition: !Equals [!Ref OrgEnabled, "true"]
   HasHostingBucketCondition: !Not [!Equals [!Ref HostingBucket, ""]]
   ConnectorAuthCondition: !Not [!Equals [!Ref ConnectorAuthDomainPrefix, ""]]
+  CreateAlarmsCondition: !Equals [!Ref CreateAlarms, "true"]
+  HasDevOpsAgentSpaceCondition: !Not [!Equals [!Ref DevOpsAgentSpaceId, ""]]
 
 Resources:
   # ============================================================
@@ -681,6 +711,131 @@ Resources:
           ORG_REGIONS: !Join [",", !Ref OrgRegions]
           ORG_EXCLUDE_ACCOUNTS: !Join [",", !Ref OrgExcludeAccountIds]
           CORS_ALLOW_ORIGIN: !Ref CorsAllowOrigin
+          AGENT_SPACE_ID: !Ref DevOpsAgentSpaceId
+          CHAT_TABLE_NAME: !If [HasDevOpsAgentSpaceCondition, !Ref ChatTable, ""]
+          CHAT_WORKER_FUNCTION_NAME: !If [HasDevOpsAgentSpaceCondition, !Ref ChatWorkerLambda, ""]
+          DEVOPS_AGENT_SETUP_URL: !FindInMap [DevOpsAgent, Setup, Url]
+
+  # ============================================================
+  # AWS DevOps Agent chat (async request/response)
+  # ------------------------------------------------------------
+  # POST /chat (stats Lambda) stores {chatId, status=processing} and invokes
+  # the chat worker asynchronously; the worker calls DevOps Agent
+  # CreateChat + SendMessage against DevOpsAgentSpaceId and writes the answer
+  # back. GET /chat/{chatId} returns the current state; the UI polls it.
+  # Created only when DevOpsAgentSpaceId is set. IAM actions use the
+  # `aidevops` prefix (the boto3 client is `devops-agent`).
+  # ============================================================
+  ChatTable:
+    Type: AWS::DynamoDB::Table
+    Condition: HasDevOpsAgentSpaceCondition
+    Properties:
+      TableName: !Sub "${ProjectName}-chat"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: chatId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: chatId
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+
+  ChatWorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: HasDevOpsAgentSpaceCondition
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ProjectName}-chat-worker"
+      RetentionInDays: !Ref LambdaLogRetentionDays
+
+  ChatWorkerRole:
+    Type: AWS::IAM::Role
+    Condition: HasDevOpsAgentSpaceCondition
+    Properties:
+      RoleName: !Sub "${ProjectName}-chat-worker-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${ProjectName}-chat-worker-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: DevOpsAgentChat
+                Effect: Allow
+                Action:
+                  - aidevops:GetAgentSpace
+                  - aidevops:CreateChat
+                  - aidevops:SendMessage
+                Resource: !Sub "arn:aws:aidevops:${AWS::Region}:${AWS::AccountId}:agentspace/${DevOpsAgentSpaceId}"
+              - Sid: ChatTableWrite
+                Effect: Allow
+                Action:
+                  - dynamodb:UpdateItem
+                  - dynamodb:GetItem
+                Resource: !GetAtt ChatTable.Arn
+              - Sid: CloudWatchLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${ChatWorkerLogGroup.Arn}"
+
+  ChatWorkerLambda:
+    Type: AWS::Lambda::Function
+    Condition: HasDevOpsAgentSpaceCondition
+    DependsOn: ChatWorkerLogGroup
+    Properties:
+      FunctionName: !Sub "${ProjectName}-chat-worker"
+      Role: !GetAtt ChatWorkerRole.Arn
+      Handler: index.handler
+      Runtime: python3.12
+      Timeout: 300 # DevOps Agent investigations can take minutes
+      MemorySize: 512
+      Code: ./lambda/chat_worker
+      Environment:
+        Variables:
+          AGENT_SPACE_ID: !Ref DevOpsAgentSpaceId
+          CHAT_TABLE_NAME: !Ref ChatTable
+          DEVOPS_AGENT_SETUP_URL: !FindInMap [DevOpsAgent, Setup, Url]
+
+  # Async invokes retry twice by default; a retry would start a second billed
+  # investigation for the same chatId, so disable retries.
+  ChatWorkerInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Condition: HasDevOpsAgentSpaceCondition
+    Properties:
+      FunctionName: !Ref ChatWorkerLambda
+      Qualifier: $LATEST
+      MaximumRetryAttempts: 0
+
+  StatsLambdaChatPolicy:
+    Type: AWS::IAM::Policy
+    Condition: HasDevOpsAgentSpaceCondition
+    Properties:
+      PolicyName: !Sub "${ProjectName}-stats-lambda-chat-policy"
+      Roles:
+        - !Ref StatsLambdaRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: ChatTableAccess
+            Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+            Resource: !GetAtt ChatTable.Arn
+          - Sid: InvokeChatWorker
+            Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource: !GetAtt ChatWorkerLambda.Arn
 
   # ============================================================
   # Cognito OAuth2 (machine-to-machine) for the Amazon Quick connector
@@ -748,6 +903,7 @@ Resources:
           - !Ref CorsAllowOrigin
         AllowMethods:
           - GET
+          - POST
           - OPTIONS
         AllowHeaders:
           - Content-Type
@@ -785,6 +941,24 @@ Resources:
     Properties:
       ApiId: !Ref StatsApi
       RouteKey: "GET /accounts"
+      AuthorizationType: AWS_IAM
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  # Chat routes always exist. Without DevOpsAgentSpaceId the stats Lambda
+  # answers POST /chat with 503 devops_agent_not_configured + a setup URL.
+  ChatStartRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "POST /chat"
+      AuthorizationType: AWS_IAM
+      Target: !Sub "integrations/${StatsApiIntegration}"
+
+  ChatGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref StatsApi
+      RouteKey: "GET /chat/{chatId}"
       AuthorizationType: AWS_IAM
       Target: !Sub "integrations/${StatsApiIntegration}"
 
@@ -901,6 +1075,7 @@ Resources:
   # ============================================================
   StatsLambdaErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: CreateAlarmsCondition
     Properties:
       AlarmName: !Sub "${ProjectName}-stats-lambda-errors"
       AlarmDescription: Stats Lambda is erroring; the dashboard is likely broken.
@@ -918,6 +1093,7 @@ Resources:
 
   EnrichmentLambdaErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: CreateAlarmsCondition
     Properties:
       AlarmName: !Sub "${ProjectName}-enrichment-lambda-errors"
       AlarmDescription: Enrichment Lambda is failing; check the DLQ for dropped events.
@@ -935,6 +1111,7 @@ Resources:
 
   EnrichmentDLQDepthAlarm:
     Type: AWS::CloudWatch::Alarm
+    Condition: CreateAlarmsCondition
     Properties:
       AlarmName: !Sub "${ProjectName}-enrichment-dlq-not-empty"
       AlarmDescription: Enrichment DLQ has dropped events. Inspect and replay or purge.
@@ -1038,3 +1215,14 @@ Outputs:
     Condition: ConnectorAuthCondition
     Description: Base URL for the JWT-authorized connector routes.
     Value: !Sub "https://${StatsApi}.execute-api.${AWS::Region}.amazonaws.com/connector"
+
+  DevOpsAgentChat:
+    Description: Whether the dashboard chat is wired to a DevOps Agent AgentSpace.
+    Value: !If
+      - HasDevOpsAgentSpaceCondition
+      - !Sub "enabled (AgentSpace ${DevOpsAgentSpaceId})"
+      - "not configured - set DevOpsAgentSpaceId to enable"
+
+  DevOpsAgentSetupUrl:
+    Description: How to create an AgentSpace for the chat feature.
+    Value: !FindInMap [DevOpsAgent, Setup, Url]

@@ -4,7 +4,7 @@
  *
  * Calls the dashboard API (API Gateway → StatsLambda) via the Vite dev
  * server's `/api/*` proxy. The proxy signs each request with SigV4 using
- * the developer's local AWS credentials (see dashboard/vite.config.js).
+ * the developer's local AWS credentials (see frontend/vite.config.js).
  * The browser never sees AWS credentials and the API is never reachable
  * unauthenticated.
  *
@@ -100,7 +100,14 @@ export async function startChat({ question, pipelineContext }) {
       body: JSON.stringify({ question, pipelineContext }),
     });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) return { error: body?.error || `chat_failed_${res.status}` };
+    if (!res.ok) {
+      // 503 devops_agent_not_configured carries `message` + `setupUrl`.
+      return {
+        error: body?.error || `chat_failed_${res.status}`,
+        message: body?.message,
+        setupUrl: body?.setupUrl,
+      };
+    }
     return body;
   } catch (err) {
     console.error('[pipelineService] startChat failed:', err);
@@ -110,8 +117,8 @@ export async function startChat({ question, pipelineContext }) {
 
 /**
  * Fetch the current state of a chat request. Returns `{ chatId, status,
- * answer?, error?, agentSpaceId? }`. Poll every ~2s until status !==
- * 'processing'.
+ * answer?, error?, message?, setupUrl?, agentSpaceId? }`. Poll every ~2s
+ * until status !== 'processing'.
  */
 export async function getChatStatus(chatId) {
   try {

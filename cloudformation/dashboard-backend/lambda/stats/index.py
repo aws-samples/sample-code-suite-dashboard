@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import time
+import uuid
 import logging
 import boto3
 from datetime import datetime, timezone
@@ -15,7 +16,8 @@ codepipeline = boto3.client('codepipeline')
 s3 = boto3.client('s3')
 sts = boto3.client('sts')
 organizations = boto3.client('organizations')
-bedrock_runtime = boto3.client('bedrock-runtime')
+lambda_client = boto3.client('lambda')
+ddb = boto3.client('dynamodb')
 DATABASE = os.environ['DATABASE']
 WORKGROUP = os.environ['WORKGROUP']
 ACCOUNT_ID = os.environ['ACCOUNT_ID']
@@ -58,7 +60,11 @@ SYNTHETIC_REGIONS = [s for s in os.environ.get(
 # (minus the local + excluded list) as an additional tracked account. The
 # reader role is assumed to live in each account because the StackSet
 # created it there.
-BEDROCK_MODEL_ID = os.environ.get('BEDROCK_MODEL_ID', 'amazon.nova-pro-v1:0')
+# DevOps Agent chat. Empty AGENT_SPACE_ID = chat not set up (POST /chat -> 503).
+AGENT_SPACE_ID = os.environ.get('AGENT_SPACE_ID', '').strip()
+CHAT_TABLE_NAME = os.environ.get('CHAT_TABLE_NAME', '')
+CHAT_WORKER_FUNCTION_NAME = os.environ.get('CHAT_WORKER_FUNCTION_NAME', '')
+DEVOPS_AGENT_SETUP_URL = os.environ.get('DEVOPS_AGENT_SETUP_URL', '')
 
 ORG_ENABLED = os.environ.get('ORG_ENABLED', 'false').lower() == 'true'
 ORG_ROLE_NAME = os.environ.get('ORG_ROLE_NAME', 'PipelineDashboardReader')
@@ -742,82 +748,131 @@ def handle_connector_pipeline_detail(event):
     return response(200, detail)
 
 
-CHAT_SYSTEM_PROMPT = (
-    "You are a helpful AI assistant embedded in a CodePipeline observability "
-    "dashboard. The user is looking at one specific pipeline execution and "
-    "wants to understand what is happening.\n\n"
-    "Answer based ONLY on the pipeline context provided in the user message. "
-    "Be concise, specific, and actionable. Prefer short paragraphs over long "
-    "walls of text. If the context does not contain enough information to "
-    "answer, say so plainly and point them to the specific AWS console page "
-    "or CloudWatch log group that would.\n\n"
-    "Do not fabricate stage names, error messages, resource IDs, or timestamps."
-)
-
+# ============================================================
+# DevOps Agent chat (async request/response)
+# ------------------------------------------------------------
+# POST /chat          -> persist {chatId, status=processing}, invoke the chat
+#                        worker Lambda asynchronously, return 202 {chatId}.
+# GET  /chat/{chatId} -> return the current DynamoDB state; the UI polls it.
+# DevOps Agent investigations outlast API Gateway's 30s integration timeout,
+# so the SendMessage stream is consumed in the worker, not here.
+# If no AgentSpace is configured, POST /chat returns 503
+# devops_agent_not_configured with a setup link instead.
+# ============================================================
 CHAT_MAX_QUESTION_CHARS = 2000
 CHAT_MAX_CONTEXT_CHARS = 20000
-CHAT_MAX_OUTPUT_TOKENS = 800
+CHAT_TTL_SECONDS = 60 * 60 * 24  # records auto-expire after 24h
 
 
-def handle_chat(event):
+def _chat_not_configured():
+    return response(503, {
+        'error': 'devops_agent_not_configured',
+        'message': 'AWS DevOps Agent is not set up for this dashboard. Create an '
+                   'AgentSpace in this account and region, then redeploy with '
+                   'DevOpsAgentSpaceId set.',
+        'setupUrl': DEVOPS_AGENT_SETUP_URL,
+        'region': REGION,
+    })
+
+
+def _parse_body(event):
     raw_body = event.get('body') or '{}'
-    # API Gateway HTTP API sometimes ships the body base64-encoded.
     if event.get('isBase64Encoded'):
-        import base64
         try:
             raw_body = base64.b64decode(raw_body).decode('utf-8')
         except Exception:
-            return response(400, {'error': 'invalid_body_encoding'})
+            return None, 'invalid_body_encoding'
     try:
         body = json.loads(raw_body)
     except Exception:
-        return response(400, {'error': 'invalid_json'})
+        return None, 'invalid_json'
+    if not isinstance(body, dict):
+        return None, 'invalid_json'
+    return body, None
+
+
+def _caller_user_id(event):
+    """IAM identity of the SigV4 caller, forwarded to DevOps Agent as userId."""
+    iam = ((event.get('requestContext') or {}).get('authorizer') or {}).get('iam') or {}
+    return (iam.get('userId') or iam.get('userArn') or 'codesuite-dashboard')[:128]
+
+
+def handle_chat_start(event):
+    if not AGENT_SPACE_ID or not CHAT_TABLE_NAME or not CHAT_WORKER_FUNCTION_NAME:
+        return _chat_not_configured()
+
+    body, err = _parse_body(event)
+    if err:
+        return response(400, {'error': err})
 
     question = (body.get('question') or '').strip()
     pipeline_context = body.get('pipelineContext') or {}
-
     if not question:
         return response(400, {'error': 'question_required'})
     if len(question) > CHAT_MAX_QUESTION_CHARS:
         return response(400, {'error': 'question_too_long', 'maxChars': CHAT_MAX_QUESTION_CHARS})
-
     try:
-        context_str = json.dumps(pipeline_context, default=str)
+        context_size = len(json.dumps(pipeline_context, default=str))
     except Exception:
         return response(400, {'error': 'invalid_pipeline_context'})
-    if len(context_str) > CHAT_MAX_CONTEXT_CHARS:
-        context_str = context_str[:CHAT_MAX_CONTEXT_CHARS] + '\n...[truncated]'
+    if context_size > CHAT_MAX_CONTEXT_CHARS:
+        # The worker truncates the serialized context; drop bulky history here.
+        pipeline_context = {k: v for k, v in pipeline_context.items() if k != 'history'}
 
-    user_message = (
-        f"Pipeline context (JSON):\n{context_str}\n\n"
-        f"Question:\n{question}"
-    )
-
+    chat_id = str(uuid.uuid4())
+    now = int(time.time())
     try:
-        resp = bedrock_runtime.converse(
-            modelId=BEDROCK_MODEL_ID,
-            system=[{'text': CHAT_SYSTEM_PROMPT}],
-            messages=[{'role': 'user', 'content': [{'text': user_message}]}],
-            inferenceConfig={'maxTokens': CHAT_MAX_OUTPUT_TOKENS, 'temperature': 0.2},
+        ddb.put_item(
+            TableName=CHAT_TABLE_NAME,
+            Item={
+                'chatId':    {'S': chat_id},
+                'status':    {'S': 'processing'},
+                'question':  {'S': question},
+                'createdAt': {'N': str(now)},
+                'expiresAt': {'N': str(now + CHAT_TTL_SECONDS)},
+            },
         )
-    except Exception as e:
-        logger.exception('Bedrock converse failed')
-        return response(502, {'error': 'bedrock_error', 'message': str(e)[:200]})
+    except Exception:
+        logger.exception('Failed to persist chat record')
+        return response(500, {'error': 'chat_persist_failed'})
 
     try:
-        answer = resp['output']['message']['content'][0]['text']
-    except (KeyError, IndexError, TypeError):
-        return response(502, {'error': 'bedrock_empty_response'})
+        lambda_client.invoke(
+            FunctionName=CHAT_WORKER_FUNCTION_NAME,
+            InvocationType='Event',
+            Payload=json.dumps({
+                'chatId': chat_id,
+                'question': question,
+                'pipelineContext': pipeline_context,
+                'userId': _caller_user_id(event),
+            }, default=str).encode('utf-8'),
+        )
+    except Exception:
+        logger.exception('Failed to invoke chat worker')
+        return response(500, {'error': 'chat_worker_invoke_failed'})
 
-    usage = resp.get('usage') or {}
-    return response(200, {
-        'answer': answer,
-        'modelId': BEDROCK_MODEL_ID,
-        'usage': {
-            'inputTokens': usage.get('inputTokens'),
-            'outputTokens': usage.get('outputTokens'),
-        },
-    })
+    return response(202, {'chatId': chat_id, 'status': 'processing'})
+
+
+def handle_chat_get(event):
+    if not CHAT_TABLE_NAME:
+        return _chat_not_configured()
+    chat_id = ((event.get('pathParameters') or {}).get('chatId') or '').strip()
+    if not chat_id:
+        return response(400, {'error': 'chat_id_required'})
+    try:
+        item = ddb.get_item(TableName=CHAT_TABLE_NAME, Key={'chatId': {'S': chat_id}}).get('Item')
+    except Exception:
+        logger.exception('Failed to read chat record')
+        return response(500, {'error': 'chat_read_failed'})
+    if not item:
+        return response(404, {'error': 'chat_not_found'})
+
+    out = {'chatId': item['chatId']['S'], 'status': item.get('status', {}).get('S', 'unknown')}
+    for field in ('answer', 'error', 'message', 'setupUrl', 'agentSpaceId'):
+        if 'S' in item.get(field, {}):
+            out[field] = item[field]['S']
+    return response(200, out)
 
 
 def handler(event, context):
@@ -851,8 +906,10 @@ def handler(event, context):
             return handle_accounts(event)
         if route == '/pipelines':
             return handle_pipelines(event)
-        if route == '/chat' and method == 'POST':
-            return handle_chat(event)
+        if route_key == 'POST /chat':
+            return handle_chat_start(event)
+        if route_key == 'GET /chat/{chatId}':
+            return handle_chat_get(event)
         return response(404, {'error': 'not_found'})
     except Exception as e:
         # Log the full exception, return a generic message + request id so the
