@@ -69,7 +69,7 @@ unsigned requests.
 │   ├── dashboard-backend/      # Lambdas, API GW, S3 + Glue + Athena, Firehose, EventBridge
 │   ├── cross-account-reader/   # IAM role deployed into each target account
 │   └── sample-pipelines/       # 3 demo pipelines (Python / Node / static) — OPTIONAL, for testing
-├── dashboard/                  # React + Vite + Tailwind UI (local-only)
+├── frontend/                   # React + Vite + Tailwind UI (local-only)
 ├── scripts/                    # Python helpers (e.g. SigV4 API caller)
 └── Makefile                    # single entrypoint — see `make help`
 ```
@@ -152,7 +152,7 @@ make install-dashboard   # first time only — npm install
 make run-dashboard       # http://localhost:5173
 ```
 
-`dashboard/.env` holds `VITE_API_URL`. It must point at the API you deployed
+`frontend/.env` holds `VITE_API_URL`. It must point at the API you deployed
 (the `StatsApiUrl` output from `make deploy-cfn-dashboard`). The Vite dev
 server signs every
 `/api/*` request with SigV4 using your local AWS credential chain — no
@@ -215,36 +215,45 @@ records auto-delete.
 
 ### What the chat backend needs
 
-> [!NOTE]
-> The chat drawer is wired into the dashboard UI, but its backend
-> (AgentSpace + chat-worker Lambda + chat state table + the `POST /chat`
-> and `GET /chat/{chatId}` routes) is **not** part of the CloudFormation
-> stacks in this repo. The CloudFormation `dashboard-backend` stack deploys
-> the ingestion/stats backend only. To use the chat feature you need to
-> provision the following components yourself and point the UI at an API
-> that serves the `/chat` routes.
+The chat backend is part of the `dashboard-backend` CloudFormation stack and
+uses an **existing** AgentSpace that you pass in as `DevOpsAgentSpaceId`:
 
-The chat backend is made up of:
+```bash
+make deploy-cfn-dashboard DEVOPS_AGENT_SPACE_ID=<agent-space-id>
+```
 
-- An **AWS DevOps Agent AgentSpace**, associated with the AWS account so the
-  agent can investigate local CodePipeline / CodeBuild resources.
-- Two IAM roles trusted by `aidevops.amazonaws.com`: a read-only monitoring
-  role (`AIDevOpsAgentAccessPolicy`) and an operator app role
-  (`AIDevOpsOperatorAppAccessPolicy`).
+If you don't have an AgentSpace, deploy without it. The `POST /chat` and
+`GET /chat/{chatId}` routes still exist, but `POST /chat` returns HTTP 503
+`devops_agent_not_configured`, and the chat drawer shows "AWS DevOps Agent
+isn't set up" with a link to
+[Creating an Agent Space](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-creating-an-agent-space.html).
+No chat table or worker Lambda is created until the ID is set. If the ID is
+set but the AgentSpace doesn't exist in this account and region, the worker
+reports the same error.
+
+With `DevOpsAgentSpaceId` set, the stack adds:
+
 - A DynamoDB table with a 24-hour TTL (`pipeline-dashboard-chat`) for chat
   state.
 - A chat-worker Lambda (`pipeline-dashboard-chat-worker`) whose IAM is scoped
-  to `aidevops:CreateChat` + `aidevops:SendMessage` on the AgentSpace ARN
-  only.
-- Two routes on the HTTP API: `POST /chat` and `GET /chat/{chatId}`, both
-  `AWS_IAM`-authorized.
+  to `aidevops:GetAgentSpace`, `aidevops:CreateChat` and
+  `aidevops:SendMessage` on that AgentSpace ARN only. Async retries are off
+  so a failure never starts a second billed investigation.
+- An inline policy letting the stats Lambda write the chat table and invoke
+  the worker.
+
+The AgentSpace itself, its monitoring role (`AIDevOpsAgentAccessPolicy`) and
+the account association are created outside this stack (console, CLI, or
+the [DevOps Agent CloudFormation guide](https://docs.aws.amazon.com/devopsagent/latest/userguide/getting-started-with-aws-devops-agent-getting-started-with-aws-devops-agent-using-aws-cloudformation.html)).
+The AgentSpace must have this account associated so the agent can read
+CodePipeline and CodeBuild.
 
 ### Prerequisites
 
 - **AWS DevOps Agent must be enabled** in the deployment account and
   region. It's a managed service — enable it once via the AWS console.
-- The deploying IAM identity needs `devops-agent:CreateAgentSpace` and
-  `iam:PassRole`.
+- An AgentSpace in the same account and region as the dashboard stack, with
+  this account associated. Pass its ID as `DEVOPS_AGENT_SPACE_ID`.
 - Available regions (at time of writing): `us-east-1`, `us-west-2`,
   `ap-southeast-2`, `ap-northeast-1`, `eu-west-1`, `eu-central-1`.
 
@@ -277,8 +286,8 @@ production account.
   No Function URLs. Permissions scoped to specific resource ARNs where
   AWS supports it.
 - **DevOps Agent:** the chat-worker Lambda's IAM allows only
-  `aidevops:CreateChat` and `aidevops:SendMessage`, scoped to this
-  project's AgentSpace ARN — it cannot start investigations against any
+  `aidevops:GetAgentSpace`, `aidevops:CreateChat` and `aidevops:SendMessage`,
+  scoped to the configured AgentSpace ARN — it cannot start investigations against any
   other AgentSpace. The AgentSpace's own monitoring role
   (`AIDevOpsAgentAccessPolicy`) is read-only. The chat state table is
   encrypted at rest and auto-expires records after 24 hours.
@@ -299,7 +308,7 @@ Highlights of the project style guide:
 
 - Always go through the Makefile — don't invent new `cloudformation deploy`
   invocations.
-- API calls live in `dashboard/src/pipelineService.js`; keep `App.jsx`
+- API calls live in `frontend/src/pipelineService.js`; keep `App.jsx`
   free of `fetch`.
 - Never hardcode `VITE_API_URL` — it comes from the `.env` at build time.
 - Never commit `.env` or secrets — `.env` is already gitignored.

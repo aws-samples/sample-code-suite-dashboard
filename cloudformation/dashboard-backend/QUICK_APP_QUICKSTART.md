@@ -161,7 +161,7 @@ Tips learned live:
   data**" in each phase; app builders otherwise tend to stub data on the first
   pass.
 - If a view looks visually off, paste the relevant snippet of
-  `dashboard/src/App.jsx` as a targeted follow-up for just that piece.
+  `frontend/src/App.jsx` as a targeted follow-up for just that piece.
 - The app auto-refreshes, so the Overview updates as new pipeline runs land.
 
 When it looks right, **Publish** and choose an access level (Account-level to
