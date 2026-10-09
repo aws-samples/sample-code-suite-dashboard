@@ -38,7 +38,8 @@ help:
 	@echo "CloudFormation deploy path:"
 	@echo "  export CFN_PKG_BUCKET=<your-bucket>   # required for Lambda packaging"
 	@echo "  make plan-cfn-dashboard               Package + show change set, no apply"
-	@echo "  make deploy-cfn-dashboard             Deploy the central backend stack"
+	@echo "  make deploy-cfn-dashboard [DEVOPS_AGENT_SPACE_ID=<id>]"
+	@echo "                                        Deploy the central backend stack (ID enables chat)"
 	@echo "  make deploy-cfn-sample-pipelines      Deploy 3 demo pipelines (empty repos)"
 	@echo "  make seed-cfn-samples [NAME_PREFIX=sample]   Push sample-apps/* into each repo"
 	@echo "  make deploy-cfn-reader CENTRAL_LAMBDA_ROLE_ARN=arn:... PROFILE=<target>"
@@ -75,7 +76,7 @@ help:
 # -----------------------------------------------------------------------------
 # Local dashboard (React + Vite)
 # -----------------------------------------------------------------------------
-DASHBOARD_DIR := dashboard
+DASHBOARD_DIR := frontend
 
 install-dashboard:
 	npm --prefix $(DASHBOARD_DIR) install
@@ -139,6 +140,11 @@ CFN_REGION     ?= us-east-1
 # stack is unchanged). Set it to turn the connector path on, e.g.:
 #   make deploy-cfn-connector CONNECTOR_DOMAIN_PREFIX=pipeline-dashboard-<account-id>
 CONNECTOR_DOMAIN_PREFIX ?=
+# Existing AWS DevOps Agent AgentSpace ID for the dashboard chat. Empty = leave
+# the stack's current value (chat returns "not configured" until it's set):
+#   make deploy-cfn-dashboard DEVOPS_AGENT_SPACE_ID=<agent-space-id>
+DEVOPS_AGENT_SPACE_ID ?=
+_agent_space_override = $(if $(DEVOPS_AGENT_SPACE_ID),--parameter-overrides DevOpsAgentSpaceId=$(DEVOPS_AGENT_SPACE_ID),)
 
 # Guard so we don't `aws cloudformation package` without a bucket and end up
 # with a half-rendered template referencing local paths.
@@ -169,6 +175,7 @@ plan-cfn-dashboard: _require-pkg-bucket
 	  --template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
 	  --capabilities CAPABILITY_NAMED_IAM \
 	  --no-execute-changeset \
+	  $(_agent_space_override) \
 	  --region $(CFN_REGION)
 
 deploy-cfn-dashboard: _require-pkg-bucket
@@ -183,6 +190,7 @@ deploy-cfn-dashboard: _require-pkg-bucket
 	  --stack-name $(CFN_STACK_NAME) \
 	  --template-file $(CFN_DIR)/dashboard-backend/.packaged.yaml \
 	  --capabilities CAPABILITY_NAMED_IAM \
+	  $(_agent_space_override) \
 	  --region $(CFN_REGION)
 	@aws cloudformation describe-stacks --stack-name $(CFN_STACK_NAME) --region $(CFN_REGION) \
 	  --query 'Stacks[0].Outputs[].{Key:OutputKey,Value:OutputValue}' --output table

@@ -52,9 +52,9 @@ console's validation rules (learned the hard way):
 > implementation that is **as close as possible** to the reference, not a
 > byte-for-byte copy.
 >
-> The reference implementation lives at **`dashboard/src/App.jsx`** in this repo
+> The reference implementation lives at **`frontend/src/App.jsx`** in this repo
 > (the full dashboard UI: cards, stat tiles, stage stepper, sparkline, account
-> switcher). `dashboard/src/ChatDrawer.jsx` is the chat drawer, out of scope for
+> switcher). `frontend/src/ChatDrawer.jsx` is the chat drawer, out of scope for
 > v1 (see Teardown/Notes).
 >
 > **Optional fidelity boost:** if a specific view comes out looking off, open
@@ -234,7 +234,7 @@ AWS side gone, run the backend teardown — see
   `history`), that is the documented OpenAPI array-schema limitation — see
   `CONNECTOR_ROUTE_CONTRACT.md` for the fallback options (JSON-string page,
   numbered fields, or REST connector type).
-- The DevOps Agent chat drawer (`dashboard/src/ChatDrawer.jsx`) is intentionally
+- The DevOps Agent chat drawer (`frontend/src/ChatDrawer.jsx`) is intentionally
   **out of scope** for this read-only v1; add it later via a POST connector
   action or a Quick embedded-chat experience.
 
