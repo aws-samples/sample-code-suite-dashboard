@@ -141,21 +141,47 @@ secrets ever live in the browser.
 
 ## Multi-account / Organizations
 
-To observe pipelines across other AWS accounts:
+### Track every account in your AWS Organization
 
-Onboard a single account, or auto-discover every account in your AWS
-Organization:
+Run these from the organization's **management account**. Member accounts
+can't list the organization's accounts or deploy organization-wide StackSets.
+Trusted access for CloudFormation StackSets must be turned on for the
+organization (CloudFormation console → StackSets → **Activate trusted
+access**).
+
+1. Find your organization root ID:
+
+   ```bash
+   aws organizations list-roots --query 'Roots[0].Id' --output text
+   ```
+
+2. Deploy (or redeploy) the dashboard with organization tracking on, with
+   `CFN_PKG_BUCKET` set as in the [Quick start](#quick-start):
+
+   ```bash
+   make enable-org-tracking ROOT_ID=r-xxxx
+   ```
+
+3. Check it worked. Every account in the organization should be listed:
+
+   ```bash
+   make list-tracked-accounts
+   ```
+
+This deploys a read-only `PipelineDashboardReader` role into every account
+in the organization, including accounts that join later. The dashboard then
+finds the accounts and reads their pipelines automatically.
+
+### Track a single account
+
+From any account, without Organizations:
 
 ```bash
 make track-account PROFILE=<other-aws-profile> ALIAS=<short-label>
-make enable-org-tracking ROOT_ID=r-xxxx
 ```
 
-The first form deploys the read-only `PipelineDashboardReader` role into the
-target account and prints the entry to add to the central stack's
-`TrackedAccounts` parameter. The second form uses CloudFormation StackSets to
-push the role to every account in the org and lets the stats Lambda enumerate
-them at runtime.
+This deploys the reader role into that account and prints an entry to add to
+the stack's `TrackedAccounts` parameter. Then run `make deploy-cfn-dashboard`.
 
 ## DevOps Agent chat
 
