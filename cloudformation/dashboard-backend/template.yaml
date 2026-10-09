@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  AWS Code Suite Dashboard — central backend stack.
+  AWS CodeSuite Dashboard — central backend stack.
   Deploys S3 data lake, Firehose
   delivery streams, EventBridge rules, Glue catalog, Athena workgroup,
   enrichment + stats Lambdas, the HTTP API (AWS_IAM auth), and

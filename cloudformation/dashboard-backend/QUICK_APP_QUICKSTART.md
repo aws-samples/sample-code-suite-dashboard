@@ -119,7 +119,7 @@ Connectors -> Create for your team -> **OpenAPI Specification** -> import
 
 - **Description** (required): allowed characters are letters, numbers, spaces,
   and `_ . , ! ? -` only. No slashes/colons/em dashes. Safe value:
-  `Read-only connector for the AWS Code Suite Dashboard.`
+  `Read-only connector for the AWS CodeSuite Dashboard.`
 - **Base URL** (required): paste the `ConnectorBaseUrl` output exactly, ending
   in `/connector`, no trailing slash. A typo in the API id makes every action
   404.

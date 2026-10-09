@@ -1,4 +1,4 @@
-"""Section diagrams for the AWS Code Suite Dashboard.
+"""Section diagrams for the AWS CodeSuite Dashboard.
 
 Run: python3 docs/diagrams/sections.py
 Outputs (docs/diagrams/):

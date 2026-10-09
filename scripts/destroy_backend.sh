@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# destroy_backend.sh — tear down the AWS backend for the Code Suite dashboard.
+# destroy_backend.sh — tear down the AWS backend for the AWS CodeSuite Dashboard.
 #
 # Deletes the pipeline-dashboard stack (and pipeline-dashboard-samples if it
 # exists), emptying their S3 buckets first because CloudFormation cannot delete
